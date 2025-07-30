@@ -62,6 +62,7 @@
 #define STATUS_HEAP_CORRUPTION 0xC0000374
 #endif
 
+extern void wrap_pre_connect(void *wrapcxt);
 extern void wrap_pre_send(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void wrap_pre_recv(void *wrapcxt, DR_PARAM_OUT void **user_data);
 
@@ -514,40 +515,7 @@ pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
 		thread_data[1] = winafl_data.afl_area;
 	}
 
-    void *addr_ptr = drwrap_get_arg(wrapcxt, 1);
-    int addr_len = (int)(ptr_int_t)drwrap_get_arg(wrapcxt, 2);
-
-    if (addr_ptr == NULL || addr_len <= 0) {
-        dr_fprintf(STDERR, "[connect] Invalid sockaddr pointer or length\n");
-        return;
-    }
-
-    byte addr_buf[128]; // large enough for sockaddr_in or sockaddr_in6
-    size_t bytes_read;
-    if (!dr_safe_read(addr_ptr, addr_len, addr_buf, &bytes_read)) {
-        dr_fprintf(STDERR, "[connect] Failed to read sockaddr at %p\n", addr_ptr);
-        return;
-    }
-
-    struct sockaddr *sa = (struct sockaddr *)addr_buf;
-
-    if (sa->sa_family == AF_INET && addr_len >= sizeof(struct sockaddr_in)) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)sa;
-        uint8_t *ip_bytes = (uint8_t *)&sin->sin_addr;
-
-        int port = ntohs(sin->sin_port);
-
-        dr_fprintf(STDERR,
-                   "[connect] IPv4: %u.%u.%u.%u:%d\n",
-                   ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3], port);
-    } else if (sa->sa_family == AF_INET6) {
-        dr_fprintf(STDERR, "[connect] IPv6 connection (not yet supported in this hook)\n");
-    } else {
-        dr_fprintf(STDERR, "[connect] Unknown or unsupported sa_family: %d\n", sa->sa_family);
-    }
-
-    bool ok = drwrap_skip_call(wrapcxt, NULL, 0);
-
+  wrap_pre_connect(wrapcxt);
 }
 
 static void
