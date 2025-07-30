@@ -11,7 +11,7 @@ pub fn respond(request: Vec<u8>) -> Result<Vec<u8>, modbus_core::Error> {
 
     match decode_request(&request) {
         Ok(data) => {
-            let RequestAdu { hdr, pdu } = data.unwrap();
+            let RequestAdu { hdr, pdu } = data.expect("Failed parsing request payload as Modbus");
             let response_pdu = match pdu.0 {
                 Request::ReadCoils(addr, n_coils) => {
                     log(&format!(
