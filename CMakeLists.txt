@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 3.5)
 
 if (${USE_COLOR})
     add_definitions(-DUSE_COLOR)
@@ -204,5 +204,37 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
     target_link_libraries(winafl "libucrt.lib")
     target_link_libraries(winafl "libvcruntime.lib")
   endif()
+
+  # Include Rust External Library
+  target_link_libraries(winafl ws2_32)
+
+  # Enable ExternalProject CMake module
+  include(ExternalProject)
+
+  # Set default ExternalProject root directory
+  set_directory_properties(PROPERTIES EP_PREFIX ${CMAKE_BINARY_DIR}/Rust)
+
+  ExternalProject_Add(
+	  libox
+	  DOWNLOAD_COMMAND ""
+	  CONFIGURE_COMMAND ""
+	  BUILD_COMMAND cargo build COMMAND cargo build --release
+	  BINARY_DIR "${CMAKE_SOURCE_DIR}/libox"
+	  INSTALL_COMMAND ""
+	  LOG_BUILD ON
+	  BUILD_ALWAYS 1
+	  USES_TERMINAL_BUILD ON
+	)
+
+  # Create dependency of Example on rust_example
+  add_dependencies(winafl libox)
+
+  # Specify Example's link libraries
+  target_link_libraries(winafl
+	debug "${CMAKE_SOURCE_DIR}/libox/target/debug/libox.lib"
+	optimized "${CMAKE_SOURCE_DIR}/libox/target/release/libox.lib"
+	ws2_32 userenv advapi32 ntdll)
+
+  set_target_properties(winafl PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED ON)
 
 endif()
