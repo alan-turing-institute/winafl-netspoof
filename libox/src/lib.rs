@@ -57,7 +57,8 @@ pub extern "C" fn module_load_event(
         // wrap "connect"
         unsafe {
             if let Some(addr) = get_proc_address(mod_base_addr, "connect") {
-                match ffi::drwrap_wrap(addr as *mut u8, Some(wrappers::pre_connect), None).as_bool()
+                match ffi::drwrap_wrap(addr as *mut u8, Some(wrappers::wrap_pre_connect), None)
+                    .as_bool()
                 {
                     true => log(&format!("[module load] wrapped connect @ 0x{:?}", addr)),
                     false => log(&format!(
@@ -71,7 +72,9 @@ pub extern "C" fn module_load_event(
         // wrap "send"
         unsafe {
             if let Some(addr) = get_proc_address(mod_base_addr, "send") {
-                match ffi::drwrap_wrap(addr as *mut u8, Some(wrappers::pre_send), None).as_bool() {
+                match ffi::drwrap_wrap(addr as *mut u8, Some(wrappers::wrap_pre_send), None)
+                    .as_bool()
+                {
                     true => log(&format!("[module load] wrapped send @ 0x{:?}", addr)),
                     false => log(&format!("[module load] failed to wrap send @ 0x{:?}", addr)),
                 }
@@ -81,7 +84,9 @@ pub extern "C" fn module_load_event(
         // wrap "recv"
         unsafe {
             if let Some(addr) = get_proc_address(mod_base_addr, "recv") {
-                match ffi::drwrap_wrap(addr as *mut u8, Some(wrappers::pre_recv), None).as_bool() {
+                match ffi::drwrap_wrap(addr as *mut u8, Some(wrappers::wrap_pre_recv), None)
+                    .as_bool()
+                {
                     true => log(&format!("[module load] wrapped recv @ 0x{:?}", addr)),
                     false => log(&format!("[module load] failed to wrap recv @ 0x{:?}", addr)),
                 }

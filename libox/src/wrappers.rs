@@ -7,7 +7,8 @@ use crate::utils::FromBuf;
 use std::{net::SocketAddr, os::raw::c_void};
 
 /// Windows docs for "connect": https://learn.microsoft.com/en-us/windows/win32/api/Winsock2/nf-winsock2-connect
-pub extern "C" fn pre_connect(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
+#[unsafe(no_mangle)]
+pub extern "C" fn wrap_pre_connect(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
     /// Skip the call the wrapped function and set a "success" return value.
     fn clean_exit(wrapctx: *mut c_void) {
         match drwrap::skip_call(wrapctx, None, 0) {
@@ -56,7 +57,8 @@ pub extern "C" fn pre_connect(wrapctx: *mut c_void, _user_data: *mut *mut c_void
 }
 
 /// Windows docs for "send": https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-send
-pub extern "C" fn pre_send(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
+#[unsafe(no_mangle)]
+pub extern "C" fn wrap_pre_send(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
     // Opaque handle for the socket (provided by the OS).
     let socket_id = drwrap::get_arg(wrapctx, 0) as usize;
     let payload_ptr = drwrap::get_arg(wrapctx, 1);
@@ -92,7 +94,8 @@ pub extern "C" fn pre_send(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
 }
 
 /// Windows docs for "recv": https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-recv
-pub extern "C" fn pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
+#[unsafe(no_mangle)]
+pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
     // Opaque handle for the socket (provided by the OS).
     let socket_id = drwrap::get_arg(wrapctx, 0) as usize;
     let socket_addr = connections::get(socket_id);

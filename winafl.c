@@ -57,6 +57,10 @@
 #define STATUS_HEAP_CORRUPTION 0xC0000374
 #endif
 
+extern void wrap_pre_send(void *wrapcxt, DR_PARAM_OUT void **user_data);
+extern void wrap_pre_recv(void *wrapcxt, DR_PARAM_OUT void **user_data);
+
+
 static uint verbose;
 
 #define NOTIFY(level, fmt, ...) do {          \
@@ -503,6 +507,39 @@ pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
 		thread_data[0] = 0;
 		thread_data[1] = winafl_data.afl_area;
 	}
+
+    void *addr_ptr = drwrap_get_arg(wrapcxt, 1);
+    int addr_len = (int)(ptr_int_t)drwrap_get_arg(wrapcxt, 2);
+
+    if (addr_ptr == NULL || addr_len <= 0) {
+        dr_fprintf(STDERR, "[connect] Invalid sockaddr pointer or length\n");
+        return;
+    }
+
+    byte addr_buf[128]; // large enough for sockaddr_in or sockaddr_in6
+    size_t bytes_read;
+    if (!dr_safe_read(addr_ptr, addr_len, addr_buf, &bytes_read)) {
+        dr_fprintf(STDERR, "[connect] Failed to read sockaddr at %p\n", addr_ptr);
+        return;
+    }
+
+    struct sockaddr *sa = (struct sockaddr *)addr_buf;
+
+    if (sa->sa_family == AF_INET && addr_len >= sizeof(struct sockaddr_in)) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)sa;
+        uint8_t *ip_bytes = (uint8_t *)&sin->sin_addr;
+
+        int port = ntohs(sin->sin_port);
+
+        dr_fprintf(STDERR,
+                   "[connect] IPv4: %u.%u.%u.%u:%d\n",
+                   ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3], port);
+    } else if (sa->sa_family == AF_INET6) {
+        dr_fprintf(STDERR, "[connect] IPv6 connection (not yet supported in this hook)\n");
+    } else {
+        dr_fprintf(STDERR, "[connect] Unknown or unsupported sa_family: %d\n", sa->sa_family);
+    }
+
 }
 
 static void
@@ -684,68 +721,43 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
         module_name = dr_module_preferred_name(info);
     }
 
-    if(options.debug_mode)
-        dr_fprintf(winafl_data.log, "Module loaded, %s\n", module_name);
+    dr_fprintf(winafl_data.log, "Module loaded, %s\n", module_name);
 
-    if(options.fuzz_module[0]) {
-        if(_stricmp(module_name, options.fuzz_module) == 0) {
-            if(options.fuzz_offset) {
-                to_wrap = info->start + options.fuzz_offset;
-            } else {
-                //first try exported symbols
-                to_wrap = (app_pc)dr_get_proc_address(info->handle, options.fuzz_method);
-                if(!to_wrap) {
-                    //if that fails, try with the symbol access library
-#ifdef USE_DRSYMS
-                    drsym_init(0);
-                    drsym_lookup_symbol(info->full_path, options.fuzz_method, (size_t *)(&to_wrap), 0);
-                    drsym_exit();
-#endif
-                    DR_ASSERT_MSG(to_wrap, "Can't find specified method in target_module");
-                    to_wrap += (size_t)info->start;
-                }
-            }
-			if (options.persistence_mode == native_mode)
-			{
-				drwrap_wrap_ex(to_wrap, pre_fuzz_handler, post_fuzz_handler, NULL, options.callconv);
-			}
-			if (options.persistence_mode == in_app)
-			{
-				drwrap_wrap_ex(to_wrap, pre_loop_start_handler, NULL, NULL, options.callconv);
-			}
-        }
 
-        if (options.debug_mode && (_stricmp(module_name, "WS2_32.dll") == 0)) {
-            to_wrap = (app_pc)dr_get_proc_address(info->handle, "recvfrom");
-            bool result = drwrap_wrap(to_wrap, recvfrom_interceptor, NULL);
-            to_wrap = (app_pc)dr_get_proc_address(info->handle, "recv");
-            result = drwrap_wrap(to_wrap, recv_interceptor, NULL);
-        }
+    if (_stricmp(module_name, "WS2_32.dll") == 0) {
+        to_wrap = (app_pc)dr_get_proc_address(info->handle, "connect");
+        bool result = drwrap_wrap(to_wrap,pre_loop_start_handler, NULL);
 
-        if(options.debug_mode && (_stricmp(module_name, "KERNEL32.dll") == 0)) {
-            to_wrap = (app_pc)dr_get_proc_address(info->handle, "CreateFileW");
-            drwrap_wrap(to_wrap, createfilew_interceptor, NULL);
-            to_wrap = (app_pc)dr_get_proc_address(info->handle, "CreateFileA");
-            drwrap_wrap(to_wrap, createfilea_interceptor, NULL);
-        }
+        to_wrap = (app_pc)dr_get_proc_address(info->handle, "send");
+        result = drwrap_wrap(to_wrap, wrap_pre_send, NULL);
 
-        if(_stricmp(module_name, "kernelbase.dll") == 0) {
-            // Since Win8, software can use _fastfail() to trigger an exception that cannot be caught.
-            // This is a problem for winafl as it also means DR won't be able to see it. Good thing is that
-            // usually those routines (__report_gsfailure for example) accounts for platforms that don't
-            // have support for fastfail. In those cases, they craft an exception record and pass it
-            // to UnhandledExceptionFilter.
-            //
-            // To work around this we set up two hooks:
-            //   (1) IsProcessorFeaturePresent(PF_FASTFAIL_AVAILABLE): to lie and pretend that the
-            //       platform doesn't support fastfail.
-            //   (2) UnhandledExceptionFilter: to intercept the exception record and forward it
-            //       to winafl's exception handler.
-            to_wrap = (app_pc)dr_get_proc_address(info->handle, "IsProcessorFeaturePresent");
-            drwrap_wrap(to_wrap, isprocessorfeaturepresent_interceptor_pre, isprocessorfeaturepresent_interceptor_post);
-            to_wrap = (app_pc)dr_get_proc_address(info->handle, "UnhandledExceptionFilter");
-            drwrap_wrap(to_wrap, unhandledexceptionfilter_interceptor_pre, NULL);
-        }
+        to_wrap = (app_pc)dr_get_proc_address(info->handle, "recv");
+        result = drwrap_wrap(to_wrap, wrap_pre_recv, NULL);
+    }
+
+    if(options.debug_mode && (_stricmp(module_name, "KERNEL32.dll") == 0)) {
+        to_wrap = (app_pc)dr_get_proc_address(info->handle, "CreateFileW");
+        drwrap_wrap(to_wrap, createfilew_interceptor, NULL);
+        to_wrap = (app_pc)dr_get_proc_address(info->handle, "CreateFileA");
+        drwrap_wrap(to_wrap, createfilea_interceptor, NULL);
+    }
+
+    if(_stricmp(module_name, "kernelbase.dll") == 0) {
+        // Since Win8, software can use _fastfail() to trigger an exception that cannot be caught.
+        // This is a problem for winafl as it also means DR won't be able to see it. Good thing is that
+        // usually those routines (__report_gsfailure for example) accounts for platforms that don't
+        // have support for fastfail. In those cases, they craft an exception record and pass it
+        // to UnhandledExceptionFilter.
+        //
+        // To work around this we set up two hooks:
+        //   (1) IsProcessorFeaturePresent(PF_FASTFAIL_AVAILABLE): to lie and pretend that the
+        //       platform doesn't support fastfail.
+        //   (2) UnhandledExceptionFilter: to intercept the exception record and forward it
+        //       to winafl's exception handler.
+        to_wrap = (app_pc)dr_get_proc_address(info->handle, "IsProcessorFeaturePresent");
+        drwrap_wrap(to_wrap, isprocessorfeaturepresent_interceptor_pre, isprocessorfeaturepresent_interceptor_post);
+        to_wrap = (app_pc)dr_get_proc_address(info->handle, "UnhandledExceptionFilter");
+        drwrap_wrap(to_wrap, unhandledexceptionfilter_interceptor_pre, NULL);
     }
 
     if (_stricmp(module_name, "verifier.dll") == 0) {
