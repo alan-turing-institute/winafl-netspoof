@@ -42,6 +42,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdint.h>
+#include <stdio.h>
+
 
 #define UNKNOWN_MODULE_ID USHRT_MAX
 
@@ -721,10 +726,11 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
         module_name = dr_module_preferred_name(info);
     }
 
-    dr_fprintf(winafl_data.log, "Module loaded, %s\n", module_name);
+    dr_fprintf(STDERR, "Module loaded, %s\n", module_name);
 
 
     if (_stricmp(module_name, "WS2_32.dll") == 0) {
+
         to_wrap = (app_pc)dr_get_proc_address(info->handle, "connect");
         bool result = drwrap_wrap(to_wrap,pre_loop_start_handler, NULL);
 
@@ -771,6 +777,8 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
 static void
 event_exit(void)
 {
+
+    dr_fprintf(STDERR, "\n in event exit!");
     if(options.debug_mode) {
         if(debug_data.pre_handler_called == 0) {
             dr_fprintf(winafl_data.log, "WARNING: Target function was never called. Incorrect target_offset?\n");
@@ -880,6 +888,7 @@ options_init(client_id_t id, int argc, const char *argv[])
     options.num_fuz_args = 0;
     options.callconv = DRWRAP_CALLCONV_DEFAULT;
 	options.dr_persist_cache = false;
+ 
     dr_snprintf(options.logdir, BUFFER_SIZE_ELEMENTS(options.logdir), ".");
 
     strcpy(options.pipe_name, "\\\\.\\pipe\\afl_pipe_default");
@@ -977,6 +986,8 @@ options_init(client_id_t id, int argc, const char *argv[])
 			}
 			else
 			{
+    				dr_fprintf(STDERR, "persistence mode must be in_app for this fork of winafl");
+            			USAGE_CHECK(false, "persistence mode must be in_app for this fork of winafl");
 				options.persistence_mode = native_mode;
 			}
 		}
@@ -987,7 +998,8 @@ options_init(client_id_t id, int argc, const char *argv[])
     }
 
     if(options.fuzz_module[0] && (options.fuzz_offset == 0) && (options.fuzz_method[0] == 0)) {
-       USAGE_CHECK(false, "If target_module is specified, then either target_method or target_offset must be as well");
+    	dr_fprintf(STDERR, "\nWinAFL would exit here based on a USAGE_CHECK, because target offset is either not set or is = 0\n");
+       /* USAGE_CHECK(false, "If target_module is specified, then either target_method or target_offset must be as well");*/
     }
 
     if(options.num_fuz_args) {
@@ -1001,6 +1013,9 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
     drreg_options_t ops = {sizeof(ops), 2 /*max slots needed: aflags*/, false};
 
     dr_set_client_name("WinAFL", "https://github.com/googleprojectzero/winafl/issues");
+
+    dr_fprintf(STDERR, "[stderr] running dr_client_main");
+    dr_fprintf(winafl_data.log, "[logfile] running dr_client_main");
 
     drmgr_init();
     drx_init();
