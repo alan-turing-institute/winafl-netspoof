@@ -503,6 +503,7 @@ pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
 	else {
 		debug_data.pre_handler_called++;
 		dr_fprintf(winafl_data.log, "In pre_loop_start_handler: %d\n", debug_data.pre_handler_called);
+		dr_fprintf(STDERR, "In pre_loop_start_handler: %d\n", debug_data.pre_handler_called);
 	}
 
 	memset(winafl_data.afl_area, 0, MAP_SIZE);
@@ -544,6 +545,8 @@ pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
     } else {
         dr_fprintf(STDERR, "[connect] Unknown or unsupported sa_family: %d\n", sa->sa_family);
     }
+
+    bool ok = drwrap_skip_call(wrapcxt, NULL, 0);
 
 }
 
