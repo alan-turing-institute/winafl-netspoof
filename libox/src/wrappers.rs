@@ -2,7 +2,7 @@ use crate::connections;
 use crate::drcore;
 use crate::drcore::log;
 use crate::drwrap;
-use crate::modbus;
+use crate::responder;
 use crate::utils::FromBuf;
 use std::panic;
 use std::{net::SocketAddr, os::raw::c_void};
@@ -125,7 +125,7 @@ pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
         .expect("need to have an existing connection to respond")
         .pending_request
         .expect("need a pending request to response");
-    let to_write = modbus::respond(pending_requst).unwrap();
+    let to_write = responder::respond(pending_requst);
 
     assert!(to_write.len() <= buf_size);
 
