@@ -515,7 +515,6 @@ pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
 		thread_data[1] = winafl_data.afl_area;
 	}
 
-  wrap_pre_connect(wrapcxt);
 }
 
 static void
