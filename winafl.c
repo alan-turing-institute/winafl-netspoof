@@ -473,15 +473,7 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
 static void
 pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
 {
-
 	void *drcontext = drwrap_get_drcontext(wrapcxt);
-
-  app_pc target_to_fuzz = drwrap_get_func(wrapcxt);
-  dr_mcontext_t *mc = drwrap_get_mcontext_ex(wrapcxt, DR_MC_ALL);
-  drcontext = drwrap_get_drcontext(wrapcxt);
-
-  fuzz_target.xsp = mc->xsp;
-  fuzz_target.func_pc = target_to_fuzz;
 
 	if (!options.debug_mode) {
 		//let server know we finished a cycle, redundunt on first cycle.
@@ -514,17 +506,6 @@ pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
 		dr_fprintf(winafl_data.log, "In pre_loop_start_handler: %d\n", debug_data.pre_handler_called);
 		dr_fprintf(STDERR, "In pre_loop_start_handler: %d\n", debug_data.pre_handler_called);
 	}
-
-  //save or restore arguments
-  if (!options.no_loop) {
-      if (fuzz_target.iteration == 0) {
-          for (i = 0; i < options.num_fuz_args; i++)
-              options.func_args[i] = drwrap_get_arg(wrapcxt, i);
-      } else {
-          for (i = 0; i < options.num_fuz_args; i++)
-              drwrap_set_arg(wrapcxt, i, options.func_args[i]);
-      }
-  }
 
 	memset(winafl_data.afl_area, 0, MAP_SIZE);
 
@@ -768,11 +749,7 @@ static void
 event_exit(void)
 {
 
-    dr_fprintf(STDERR, "\n in event exit! trying to redirect to start of connect.");
-    mc->xsp = fuzz_target.xsp;
-    mc->pc = fuzz_target.func_pc;
-	  drwrap_redirect_execution(wrapcxt);
-
+    dr_fprintf(STDERR, "\n in event exit!");
     if(options.debug_mode) {
         if(debug_data.pre_handler_called == 0) {
             dr_fprintf(winafl_data.log, "WARNING: Target function was never called. Incorrect target_offset?\n");
