@@ -9,7 +9,7 @@ use std::{net::SocketAddr, os::raw::c_void};
 
 /// Windows docs for "connect": https://learn.microsoft.com/en-us/windows/win32/api/Winsock2/nf-winsock2-connect
 #[unsafe(no_mangle)]
-pub extern "C" fn wrap_pre_connect(wrapctx: *mut c_void) {
+pub extern "C" fn wrap_pre_connect(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
     // Override the panic hook to log the DynamoRio logger when a panic occurs.
     panic::set_hook(Box::new(|panic_info| {
         log(&format!("panic occurred: {panic_info}"));
