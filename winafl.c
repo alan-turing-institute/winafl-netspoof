@@ -567,8 +567,6 @@ pre_fuzz_handler(void *wrapcxt, INOUT void **user_data)
         thread_data[1] = winafl_data.afl_area;
     }
 
-    // Call the Rust library to handle the recv injection.
-    wrap_pre_recv(wrapcxt, user_data);
 }
 
 static void
@@ -705,26 +703,21 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
 
     dr_fprintf(STDERR, "Module loaded, %s\n", module_name);
 
+    bool result = drwrap_wrap(options.fuzz_offset, pre_fuzz_handler, post_fuzz_handler);
 
     if (_stricmp(module_name, "WS2_32.dll") == 0) {
 
         to_wrap = (app_pc)dr_get_proc_address(info->handle, "connect");
-        bool result = drwrap_wrap(to_wrap,wrap_pre_connect, NULL);
+        result = drwrap_wrap(to_wrap,wrap_pre_connect, NULL);
 
         to_wrap = (app_pc)dr_get_proc_address(info->handle, "send");
         result = drwrap_wrap(to_wrap, wrap_pre_send, NULL);
 
         to_wrap = (app_pc)dr_get_proc_address(info->handle, "recv");
-        result = drwrap_wrap(to_wrap, pre_fuzz_handler, NULL);
+        result = drwrap_wrap(to_wrap, wrap_pre_recv, NULL);
     }
 
     if(options.debug_mode && (_stricmp(module_name, "KERNEL32.dll") == 0)) {
-        to_wrap = (app_pc)dr_get_proc_address(info->handle, "ExitProcess");
-        drwrap_wrap(to_wrap, post_fuzz_handler, NULL);
-    
-        to_wrap = (app_pc)dr_get_proc_address(info->handle, "TerminateProcess");
-        drwrap_wrap(to_wrap, post_fuzz_handler, NULL);
-
         to_wrap = (app_pc)dr_get_proc_address(info->handle, "CreateFileW");
         drwrap_wrap(to_wrap, createfilew_interceptor, NULL);
 
