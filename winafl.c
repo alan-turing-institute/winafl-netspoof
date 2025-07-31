@@ -545,6 +545,7 @@ pre_fuzz_handler(void *wrapcxt, INOUT void **user_data)
     } else {
         debug_data.pre_handler_called++;
         dr_fprintf(winafl_data.log, "In pre_fuzz_handler\n");
+        dr_fprintf(STDERR, "In pre_fuzz_handler\n");
     }
 
     //save or restore arguments
@@ -593,6 +594,7 @@ post_fuzz_handler(void *wrapcxt, void *user_data)
     } else {
         debug_data.post_handler_called++;
         dr_fprintf(winafl_data.log, "In post_fuzz_handler\n");
+        dr_fprintf(STDERR, "In post_fuzz_handler\n");
     }
 
     /* We don't need to reload context in case of network-based fuzzing. */
@@ -601,6 +603,8 @@ post_fuzz_handler(void *wrapcxt, void *user_data)
 
     fuzz_target.iteration++;
     if(fuzz_target.iteration == options.fuzz_iterations) {
+        dr_fprintf(winafl_data.log, "Reached Max fuzz iterations, calling dr_exit_process from post_fuzz_handler\n");
+        dr_fprintf(STDERR, "Reached Max fuzz iterations, calling dr_exit_process from post_fuzz_handler\n");
         dr_exit_process(0);
     }
 
