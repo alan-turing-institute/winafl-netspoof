@@ -705,7 +705,10 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
 
     if(_stricmp(module_name, options.fuzz_module) == 0) {
         to_wrap = info->start + options.fuzz_offset;
-        bool result = drwrap_wrap_ex(options.fuzz_offset, pre_fuzz_handler, post_fuzz_handler,NULL, options.callconv);
+        dr_fprintf(STDERR, "target module: %x\n", info->start);
+        bool result = drwrap_wrap_ex(to_wrap, pre_fuzz_handler, post_fuzz_handler,NULL, options.callconv);
+        
+        dr_fprintf(STDERR, "did the wrap succeed?  %B\n", result);
     }
 
 
