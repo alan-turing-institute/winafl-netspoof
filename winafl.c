@@ -703,12 +703,16 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
 
     dr_fprintf(STDERR, "Module loaded, %s\n", module_name);
 
-    bool result = drwrap_wrap_ex(options.fuzz_offset, pre_fuzz_handler, post_fuzz_handler,NULL, options.callconv);
+    if(_stricmp(module_name, options.fuzz_module) == 0) {
+        to_wrap = info->start + options.fuzz_offset;
+        bool result = drwrap_wrap_ex(options.fuzz_offset, pre_fuzz_handler, post_fuzz_handler,NULL, options.callconv);
+    }
+
 
     if (_stricmp(module_name, "WS2_32.dll") == 0) {
 
         to_wrap = (app_pc)dr_get_proc_address(info->handle, "connect");
-        result = drwrap_wrap(to_wrap,wrap_pre_connect, NULL);
+        bool result = drwrap_wrap(to_wrap,wrap_pre_connect, NULL);
 
         to_wrap = (app_pc)dr_get_proc_address(info->handle, "send");
         result = drwrap_wrap(to_wrap, wrap_pre_send, NULL);
