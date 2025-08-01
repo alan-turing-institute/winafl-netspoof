@@ -71,7 +71,20 @@ pub extern "C" fn wrap_pre_send(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
     let payload_size = drwrap::get_arg(wrapctx, 2) as usize;
 
     match connections::get(socket_id) {
-        None => log(&format!("[send] tried to send to an unconnected socket!")),
+        None => {
+            log(&format!(
+                "[send] tried to send to an unconnected socket! Recording the payload in the wildcard slot."
+            ));
+            match drcore::safe_read(payload_ptr, payload_size) {
+                Ok(payload) => {
+                    log(&format!("[send] target: *wildcard, payload: {:?}", payload));
+                    connections::set_wildcard(payload);
+                }
+                Err(read_err) => {
+                    log(&format!("[send] Failed reading payload: {:?}", read_err));
+                }
+            };
+        }
         Some(addr) => {
             match drcore::safe_read(payload_ptr, payload_size) {
                 Ok(payload) => {
@@ -121,10 +134,15 @@ pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
     // Must write <= buf_size to buf_ptr.
     let buf_size = drwrap::get_arg(wrapctx, 2) as usize;
 
-    let pending_requst = socket_addr
-        .expect("need to have an existing connection to respond")
-        .pending_request
-        .expect("need a pending request to response");
+    let pending_requst = match socket_addr {
+        None => {
+            connections::get_wildcard().expect("need to have filled the wildcard slot to respond")
+        }
+        Some(addr) => addr
+            .pending_request
+            .expect("need to have a recorded pending request on this connection"),
+    };
+
     let to_write = responder::respond(pending_requst);
 
     assert!(to_write.len() <= buf_size);
