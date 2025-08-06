@@ -3,6 +3,7 @@ mod drcore;
 mod drwrap;
 mod ffi;
 mod modbus;
+mod network;
 mod responder;
 mod utils;
 mod wrappers;

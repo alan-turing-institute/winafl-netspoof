@@ -144,7 +144,6 @@ pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
     };
 
     let to_write = responder::respond(pending_requst);
-
     assert!(to_write.len() <= buf_size);
 
     match drcore::safe_write(buf_ptr, to_write.clone()) {
@@ -159,6 +158,8 @@ pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
             log(&format!("[recv] Failed writing payload: {:?}", write_err));
         }
     };
+
+    connections::record_response(socket_id, to_write.clone());
 
     // As specified in the "recv" api docs.
     let retval = Some(to_write.len());
