@@ -4,6 +4,7 @@ use crate::drcore::log;
 use crate::drwrap;
 use crate::responder;
 use crate::utils::FromBuf;
+use crate::utils::socketaddr_from_socket_id;
 use std::panic;
 use std::{net::SocketAddr, os::raw::c_void};
 
@@ -70,35 +71,28 @@ pub extern "C" fn wrap_pre_send(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
     let payload_ptr = drwrap::get_arg(wrapctx, 1);
     let payload_size = drwrap::get_arg(wrapctx, 2) as usize;
 
-    match connections::get(socket_id) {
-        None => {
+    let connection = connections::get(socket_id).unwrap_or_else(|| {
             log(&format!(
-                "[send] tried to send to an unconnected socket! Recording the payload in the wildcard slot."
+                "[send] tried to send to an unconnected socket! Adding this as a new connection and recording the payload."
             ));
-            match drcore::safe_read(payload_ptr, payload_size) {
-                Ok(payload) => {
-                    log(&format!("[send] target: *wildcard, payload: {:?}", payload));
-                    connections::set_wildcard(payload);
-                }
-                Err(read_err) => {
-                    log(&format!("[send] Failed reading payload: {:?}", read_err));
-                }
-            };
+            unsafe {
+            let socket_addr = socketaddr_from_socket_id(socket_id).expect("Failed parsing SocketAddr from socket_id (opaque OS handle)");
+            connections::insert(socket_id, socket_addr);
+            connections::get(socket_id).unwrap()
+            }
+    });
+
+    match drcore::safe_read(payload_ptr, payload_size) {
+        Ok(payload) => {
+            log(&format!(
+                "[send] target: {}, payload: {:?}",
+                connection.to_string(),
+                payload
+            ));
+            connections::record_request(socket_id, payload);
         }
-        Some(addr) => {
-            match drcore::safe_read(payload_ptr, payload_size) {
-                Ok(payload) => {
-                    log(&format!(
-                        "[send] target: {}, payload: {:?}",
-                        addr.to_string(),
-                        payload
-                    ));
-                    connections::record_request(socket_id, payload);
-                }
-                Err(read_err) => {
-                    log(&format!("[send] Failed reading payload: {:?}", read_err));
-                }
-            };
+        Err(read_err) => {
+            log(&format!("[send] Failed reading payload: {:?}", read_err));
         }
     };
 
@@ -117,31 +111,18 @@ pub extern "C" fn wrap_pre_send(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
 pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_void) {
     // Opaque handle for the socket (provided by the OS).
     let socket_id = drwrap::get_arg(wrapctx, 0) as usize;
-    let socket_addr = connections::get(socket_id);
-    let socket_addr_str = match socket_addr.clone() {
-        None => {
-            log(&format!("[recv] called with an unconnected socket!"));
-            "unknown"
-        }
-        Some(addr) => {
-            log(&format!("[recv] called for: {}", addr.to_string()));
-            &addr.to_string()
-        }
-    };
+    let connection = connections::get(socket_id).expect(
+        "recv called with an unknown socket_id. Unable to retrieve the associated send payload",
+    );
 
     // Pointer to the recv buffer that the exe will read from.
     let buf_ptr = drwrap::get_arg(wrapctx, 1);
     // Must write <= buf_size to buf_ptr.
     let buf_size = drwrap::get_arg(wrapctx, 2) as usize;
 
-    let pending_requst = match socket_addr {
-        None => {
-            connections::get_wildcard().expect("need to have filled the wildcard slot to respond")
-        }
-        Some(addr) => addr
-            .pending_request
-            .expect("need to have a recorded pending request on this connection"),
-    };
+    let pending_requst = connection
+        .pending_request
+        .expect("need to have a recorded pending request on this connection");
 
     let to_write = responder::respond(pending_requst);
     assert!(to_write.len() <= buf_size);

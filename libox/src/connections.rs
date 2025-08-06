@@ -28,22 +28,6 @@ impl Connection {
     }
 }
 
-static WILDCARD: LazyLock<Mutex<Option<Vec<u8>>>> = LazyLock::new(|| Mutex::new(None));
-
-pub fn set_wildcard(request: Vec<u8>) {
-    let mut slot = WILDCARD
-        .lock()
-        .expect("Failed getting lock on WILDCARD slot.");
-    *slot = Some(request);
-}
-
-pub fn get_wildcard() -> Option<Vec<u8>> {
-    WILDCARD
-        .lock()
-        .expect("Failed getting lock on WILDCARD slot.")
-        .clone()
-}
-
 /// HashMap of currently open network connections.
 static CONNECTION_MAP: LazyLock<Mutex<HashMap<usize, Connection>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));

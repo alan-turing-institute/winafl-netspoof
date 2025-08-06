@@ -13,5 +13,6 @@ libc = "0.2"
 winapi = "0.3"
 modbus-core = "0.1.1"
 
+
 [build-dependencies]
 bindgen = "0.72"
