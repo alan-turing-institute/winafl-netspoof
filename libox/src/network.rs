@@ -56,6 +56,7 @@ pub fn dump() {
     let out_file_path = env::var("PCAP").expect("PCAP must be set as an environment variable, with a file path to the file used to dump captured network traffic.");
 
     let mut out_file = File::options()
+        .create(true)
         .append(true)
         .open(out_file_path)
         .expect("Failed to open file at path: {out_file_path}");
