@@ -62,7 +62,7 @@
 #define STATUS_HEAP_CORRUPTION 0xC0000374
 #endif
 
-extern void dump_pcap(void);
+extern int dump_pcap(void);
 extern void wrap_pre_connect(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void wrap_pre_send(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void wrap_pre_recv(void *wrapcxt, DR_PARAM_OUT void **user_data);
@@ -764,7 +764,9 @@ event_exit(void)
 {
     dr_fprintf(STDERR, "\n in event exit!");
     dr_fprintf(STDERR, "\n writing network traffic to file PCAP\n");
-    dump_pcap();    
+    if dump_pcap() != 0 {
+        dr_fprintf(STDERR, "\n Error occured while writing network traffic to file PCAP!\n");
+    };
 
     if(options.debug_mode) {
         if(debug_data.pre_handler_called == 0) {

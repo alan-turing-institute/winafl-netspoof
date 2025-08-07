@@ -1,7 +1,7 @@
 use std::{
     env,
     fmt::Display,
-    fs::File,
+    fs::{File, metadata},
     io::Write,
     net::SocketAddr,
     sync::{LazyLock, Mutex},
@@ -17,6 +17,17 @@ pub struct PacketMeta {
 pub enum Packet {
     Inbound(PacketMeta),
     Outbound(PacketMeta),
+}
+
+impl Packet {
+    pub fn to_csv(&self) -> String {
+        match self {
+            Packet::Inbound(PacketMeta { addr, payload }) => format!("{addr},self,{:?}\n", payload),
+            Packet::Outbound(PacketMeta { addr, payload }) => {
+                format!("self,{addr},{:?}\n", payload)
+            }
+        }
+    }
 }
 
 impl Display for Packet {
@@ -47,23 +58,48 @@ pub fn push(pkt: Packet) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn dump_pcap() {
-    dump();
+pub extern "C" fn dump_pcap() -> i32 {
+    match dump(DumpFormat::CSV) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
 }
 
-pub fn dump() {
-    let pcap = PCAP.lock().expect("Failed getting lock on PCAP");
-    let out_file_path = env::var("PCAP").expect("PCAP must be set as an environment variable, with a file path to the file used to dump captured network traffic.");
+pub enum DumpFormat {
+    CSV,
+    HumanReadable,
+}
+
+pub fn dump(dump_fmt: DumpFormat) -> Result<(), String> {
+    let pcap = PCAP
+        .lock()
+        .map_err(|e| format!("Failed getting lock on PCAP: {e}\n"))?;
+    let out_file_path = env::var("PCAP").map_err(|e| format!("PCAP must be set as an environment variable, with a file path to the file used to dump captured network traffic: {e}\n"))?;
+
+    let file_exists = metadata(&out_file_path).is_ok();
 
     let mut out_file = File::options()
         .create(true)
         .append(true)
-        .open(out_file_path)
-        .expect("Failed to open file at path: {out_file_path}");
+        .open(&out_file_path)
+        .map_err(|e| format!("Failed to open file at path {out_file_path}: {e}\n"))?;
+
+    if !file_exists {
+        if let DumpFormat::CSV = dump_fmt {
+            out_file
+                .write("src,dst,payload".as_bytes())
+                .map_err(|e| format!("Failed writing csv header to file {out_file_path}: {e}\n"))?;
+        }
+    }
 
     for pkt in pcap.iter() {
+        let serialise = match dump_fmt {
+            DumpFormat::HumanReadable => Packet::to_string,
+            DumpFormat::CSV => Packet::to_csv,
+        };
         out_file
-            .write_all(pkt.to_string().as_bytes())
-            .expect("Failed writing captured network packets to file.");
+            .write_all(serialise(pkt).as_bytes())
+            .map_err(|e| format!("Failed writing captured network packets to file: {e}\n"))?;
     }
+    Ok(())
 }
