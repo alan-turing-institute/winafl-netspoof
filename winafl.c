@@ -764,7 +764,7 @@ event_exit(void)
 {
     dr_fprintf(STDERR, "\n in event exit!");
     dr_fprintf(STDERR, "\n writing network traffic to file PCAP\n");
-    if dump_pcap() != 0 {
+    if (dump_pcap() != 0) {
         dr_fprintf(STDERR, "\n Error occured while writing network traffic to file PCAP!\n");
     };
 
