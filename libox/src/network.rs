@@ -87,7 +87,7 @@ pub fn dump(dump_fmt: DumpFormat) -> Result<(), String> {
     if !file_exists {
         if let DumpFormat::CSV = dump_fmt {
             out_file
-                .write("src,dst,payload".as_bytes())
+                .write("src,dst,payload\n".as_bytes())
                 .map_err(|e| format!("Failed writing csv header to file {out_file_path}: {e}\n"))?;
         }
     }
