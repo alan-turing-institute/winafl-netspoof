@@ -122,7 +122,7 @@ pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
 
     let pending_requst = connection
         .pending_request
-        .expect("need to have a recorded pending request on this connection");
+        .expect("must have a recorded pending request on this connection");
 
     let to_write = responder::respond(pending_requst);
     assert!(to_write.len() <= buf_size);
@@ -131,7 +131,7 @@ pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
         Ok(()) => {
             log(&format!(
                 "[recv] target: {}, payload: {:?}",
-                socket_addr_str,
+                connection.addr,
                 to_write.as_slice()
             ));
         }
