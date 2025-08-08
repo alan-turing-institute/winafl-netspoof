@@ -1,3 +1,4 @@
+use crate::drcore::log;
 use std::{
     env,
     fmt::Display,
@@ -61,7 +62,10 @@ pub fn push(pkt: Packet) {
 pub extern "C" fn dump_pcap() -> i32 {
     match dump(DumpFormat::CSV) {
         Ok(()) => 0,
-        Err(_) => 1,
+        Err(err_msg) => {
+            log(&format!("Error dumping pcap as csv: {}\n", &err_msg));
+            1
+        }
     }
 }
 
