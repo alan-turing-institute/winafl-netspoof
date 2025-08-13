@@ -11,7 +11,7 @@ pub unsafe extern "C" fn dll_mutate_testcase(
     common_fuzz_stuff: CommonFuzzStuffFn,
 ) -> c_uchar {
     unsafe {
-        let mut bailout: c_uchar = 0;
+        let mut bailout: c_uchar = 1;
 
         if buf.is_null() || len == 0 {
             return bailout;
