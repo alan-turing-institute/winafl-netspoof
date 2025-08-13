@@ -240,6 +240,17 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
 	  USES_TERMINAL_BUILD ON
 	)
 
+  set(MUTATOR_RELEASE_DLL "${CMAKE_SOURCE_DIR}/mutator/target/release/mutator.dll")
+
+  # Copy mutator.dll after building
+  ExternalProject_Add_Step(mutator copy_dll
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${MUTATOR_RELEASE_DLL}"
+          "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>"
+      DEPENDEES build
+      ALWAYS 1
+  )
+
   add_dependencies(winafl mutator)
 
   # Specify Example's link libraries
