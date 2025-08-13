@@ -9,3 +9,6 @@ crate-type = ["cdylib"]
 [dependencies]
 libc = "0.2"
 
+[dev-dependencies]
+libloading = "0.8"
+
