@@ -14,11 +14,14 @@ type MutatorFn = unsafe extern "C" fn(
 ) -> U8;
 
 unsafe extern "C" fn my_common_fuzz(_argv: *mut CChar, buf: *mut U8, len: U32) -> U8 {
-    println!(
-        "[common_fuzz_stuff] called with len={}, first byte={}",
-        len, *buf
-    );
-    0 // keep mutating
+    unsafe {
+        let slice = std::slice::from_raw_parts(buf, len as usize);
+        println!(
+            "[common_fuzz_stuff] called with len={}, first byte={:?}",
+            len, slice
+        );
+        0 // keep mutating
+    }
 }
 
 #[test]
