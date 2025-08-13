@@ -226,8 +226,21 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
 	  USES_TERMINAL_BUILD ON
 	)
 
-  # Create dependency of Example on rust_example
   add_dependencies(winafl libox)
+
+    ExternalProject_Add(
+	  mutator
+	  DOWNLOAD_COMMAND ""
+	  CONFIGURE_COMMAND ""
+	  BUILD_COMMAND cargo build COMMAND cargo build --release
+	  BINARY_DIR "${CMAKE_SOURCE_DIR}/mutator"
+	  INSTALL_COMMAND ""
+	  LOG_BUILD ON
+	  BUILD_ALWAYS 1
+	  USES_TERMINAL_BUILD ON
+	)
+
+  add_dependencies(winafl mutator)
 
   # Specify Example's link libraries
   target_link_libraries(winafl
