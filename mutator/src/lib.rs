@@ -52,11 +52,8 @@ pub unsafe extern "C" fn dll_mutate_testcase_with_energy(
             .expect("Failed to write to mutation_log.txt file");
 
         let focus_len = match energy {
-            // focus on the first byte when energy is below default energy
-            0..256 => 1,
             // focus on the first 20% of the bytes when energy is low
-            256..400 => (0.2 * len as f32).floor() as usize,
-            // focus on all bytes when energy is high
+            0..100 => (0.2 * len as f32).floor() as usize,
             _ => len as usize,
         };
 
