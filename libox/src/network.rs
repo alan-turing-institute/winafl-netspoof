@@ -2,7 +2,7 @@ use crate::drcore::log;
 use std::{
     env,
     fmt::Display,
-    fs::{File, metadata},
+    fs::{self, File, metadata},
     io::Write,
     net::SocketAddr,
     sync::{LazyLock, Mutex},
@@ -65,11 +65,16 @@ fn is_magic_pkt(pkt: &Packet) -> bool {
 
 pub fn push(pkt: Packet) {
     if is_magic_pkt(&pkt) {
+        fs::write(
+            "tasty_treat.txt",
+            format!("Just found the magic packet!\n{:?}", &pkt),
+        )
+        .expect("Failed to write to tast_treat.txt file!");
         PCAP.lock().expect("Failed getting lock on PCAP").push(pkt);
         dump_pcap();
-        panic!("found magic packet!");
+    } else {
+        PCAP.lock().expect("Failed getting lock on PCAP").push(pkt);
     }
-    PCAP.lock().expect("Failed getting lock on PCAP").push(pkt);
 }
 
 #[unsafe(no_mangle)]

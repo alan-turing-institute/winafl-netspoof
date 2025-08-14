@@ -1,5 +1,5 @@
 use rand::{Rng, seq::SliceRandom};
-use std::{fs::OpenOptions, io::Write, slice};
+use std::{env, fs::OpenOptions, io::Write, slice};
 
 use libc::{c_char, c_uchar, c_uint, c_void};
 
@@ -42,22 +42,26 @@ pub unsafe extern "C" fn dll_mutate_testcase_with_energy(
 
         let slice = slice::from_raw_parts(buf, len as usize);
 
-        let mut log_f = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("mutator_log.txt")
-            .expect("Failed to create or open mutator_log.txt");
+        if let Some(f_path) = env::var("MUTATOR_LOG").ok() {
+            let mut log_f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(f_path)
+                .expect("Failed to create or open mutator_log.txt");
 
-        writeln!(log_f, "{:?} has energy {}", slice, energy)
-            .expect("Failed to write to mutation_log.txt file");
+            writeln!(log_f, "{:?} has energy {}", slice, energy)
+                .expect("Failed to write to mutation_log.txt file");
+        }
 
-        let focus_len = match energy {
+        let focus_range = match energy {
             // focus on the first 20% of the bytes when energy is low
-            0..100 => (0.2 * len as f32).floor() as usize,
-            _ => len as usize,
+            0..100 => 0..((0.2 * len as f32).floor() as usize),
+            100..1400 => 0..(len as usize),
+            // focus on the last 20% of the bytes when energy is high
+            _ => ((0.8 * len as f32).floor() as usize)..(len as usize),
         };
 
-        let mut focus_idxs = (0..focus_len).collect::<Vec<_>>();
+        let mut focus_idxs = focus_range.collect::<Vec<_>>();
         let mut rng = rand::thread_rng();
         focus_idxs.shuffle(&mut rng);
 
