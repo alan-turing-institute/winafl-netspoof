@@ -1,4 +1,5 @@
 use crate::drcore::log;
+use crate::fuzzer;
 use modbus_core::tcp::ResponseAdu;
 use modbus_core::tcp::server::encode_response;
 use modbus_core::tcp::{RequestAdu, server::decode_request};
@@ -19,9 +20,18 @@ pub fn respond(request: Vec<u8>) -> Result<Vec<u8>, modbus_core::Error> {
                         n_coils, addr
                     ));
                     // 1 bit per coil, 8 coils per byte
-                    buf.truncate(n_coils.div_ceil(8).into());
+                    let content_len: usize = n_coils.div_ceil(8).into();
+                    let content = fuzzer::call();
+                    if content.len() != content_len {
+                        log(&format!(
+                            "[modbus] Fuzzer content wasn't expect length of {content_len}!"
+                        ));
+                    }
+                    let mut coils = Vec::new();
+                    modbus_core::unpack_coils(&content, n_coils, &mut coils)?;
+                    buf.truncate(content_len);
                     Ok(Response::ReadCoils(
-                        Coils::from_bools(&vec![true; n_coils as usize], &mut buf).unwrap(),
+                        Coils::from_bools(&coils, &mut buf).unwrap(),
                     ))
                 }
                 Request::WriteSingleCoil(addr, coil) => {

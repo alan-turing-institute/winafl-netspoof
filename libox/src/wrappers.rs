@@ -2,7 +2,7 @@ use crate::connections;
 use crate::drcore;
 use crate::drcore::log;
 use crate::drwrap;
-use crate::responder;
+use crate::modbus;
 use crate::utils::FromBuf;
 use crate::utils::socketaddr_from_socket_id;
 use std::panic;
@@ -124,7 +124,8 @@ pub extern "C" fn wrap_pre_recv(wrapctx: *mut c_void, _user_data: *mut *mut c_vo
         .pending_request
         .expect("must have a recorded pending request on this connection");
 
-    let to_write = responder::respond(pending_requst);
+    // let to_write = fuzzer::respond(pending_requst);
+    let to_write = modbus::respond(pending_requst).expect("Failed generating modbus response");
     assert!(to_write.len() <= buf_size);
 
     match drcore::safe_write(buf_ptr, to_write.clone()) {
