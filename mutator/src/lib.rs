@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::{Rng, seq::SliceRandom};
 use std::{fs::OpenOptions, io::Write, slice};
 
 use libc::{c_char, c_uchar, c_uint, c_void};
@@ -57,10 +57,13 @@ pub unsafe extern "C" fn dll_mutate_testcase_with_energy(
             _ => len as usize,
         };
 
-        let mut mutated = slice.to_owned();
+        let mut focus_idxs = (0..focus_len).collect::<Vec<_>>();
         let mut rng = rand::thread_rng();
+        focus_idxs.shuffle(&mut rng);
+
+        let mut mutated = slice.to_owned();
         // mutate each byte
-        for i in 0..focus_len {
+        for i in focus_idxs {
             mutated[i] = mutated[i].wrapping_add(rng.r#gen());
 
             if let Some(common_fuzz) = common_fuzz_stuff {
