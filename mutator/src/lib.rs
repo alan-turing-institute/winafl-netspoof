@@ -1,8 +1,10 @@
+use rand::Rng;
 use std::{fs::OpenOptions, io::Write, slice};
 
 use libc::{c_char, c_uchar, c_uint, c_void};
 
 const NO_FUTHER_MUTATIONS: u8 = 1;
+const RUN_BUILT_IN_MUTATORS: u8 = 0;
 
 pub type WriteToTestCaseFn = extern "C" fn(*mut c_void, c_uint);
 pub type RunTargetFn = extern "C" fn(*mut *mut c_char, c_uint) -> c_uchar;
@@ -35,7 +37,7 @@ pub unsafe extern "C" fn dll_mutate_testcase_with_energy(
 ) -> c_uchar {
     unsafe {
         if buf.is_null() || len == 0 {
-            return NO_FUTHER_MUTATIONS;
+            return RUN_BUILT_IN_MUTATORS;
         };
 
         let slice = slice::from_raw_parts(buf, len as usize);
@@ -50,15 +52,19 @@ pub unsafe extern "C" fn dll_mutate_testcase_with_energy(
             .expect("Failed to write to mutation_log.txt file");
 
         let focus_len = match energy {
-            // focus on the first 20% of the bytes when energy is low.
-            0..256 => (0.2 * len as f32).floor() as usize,
+            // focus on the first byte when energy is below default energy
+            0..256 => 1,
+            // focus on the first 20% of the bytes when energy is low
+            256..400 => (0.2 * len as f32).floor() as usize,
+            // focus on all bytes when energy is high
             _ => len as usize,
         };
 
+        let mut mutated = slice.to_owned();
+        let mut rng = rand::thread_rng();
         // mutate each byte
         for i in 0..focus_len {
-            let mut mutated = slice.to_owned();
-            mutated[i] = mutated[i].wrapping_add(1);
+            mutated[i] = mutated[i].wrapping_add(rng.r#gen());
 
             if let Some(common_fuzz) = common_fuzz_stuff {
                 if common_fuzz(argv, mutated.as_ptr() as *mut u8, len) != 0 {
