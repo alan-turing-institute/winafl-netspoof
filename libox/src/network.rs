@@ -10,11 +10,13 @@ use std::{
 
 static PCAP: LazyLock<Mutex<Vec<Packet>>> = LazyLock::new(|| Mutex::new(Vec::with_capacity(100)));
 
+#[derive(Clone, Debug)]
 pub struct PacketMeta {
     addr: SocketAddr,
     payload: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
 pub enum Packet {
     Inbound(PacketMeta),
     Outbound(PacketMeta),
@@ -54,8 +56,20 @@ impl Packet {
     }
 }
 
+fn is_magic_pkt(pkt: &Packet) -> bool {
+    if let Packet::Inbound(PacketMeta { payload, .. }) = pkt {
+        return payload.as_slice() == &[87, 111, 114, 108, 100];
+    }
+    false
+}
+
 pub fn push(pkt: Packet) {
-    PCAP.lock().expect("Failed getting lock on PCAP").push(pkt)
+    if is_magic_pkt(&pkt) {
+        PCAP.lock().expect("Failed getting lock on PCAP").push(pkt);
+        dump_pcap();
+        panic!("found magic packet!");
+    }
+    PCAP.lock().expect("Failed getting lock on PCAP").push(pkt);
 }
 
 #[unsafe(no_mangle)]
