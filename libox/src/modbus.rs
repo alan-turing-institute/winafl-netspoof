@@ -5,7 +5,7 @@ use modbus_core::tcp::server::encode_response;
 use modbus_core::tcp::{RequestAdu, server::decode_request};
 use modbus_core::{Coils, Request, Response, ResponsePdu};
 
-pub fn respond(request: Vec<u8>) -> Result<Vec<u8>, modbus_core::Error> {
+pub fn respond(request: Vec<u8>) -> Result<Vec<u8>, String> {
     let mut buf = vec![0u8; 256];
 
     let mut response = vec![0u8; 256];
@@ -28,7 +28,8 @@ pub fn respond(request: Vec<u8>) -> Result<Vec<u8>, modbus_core::Error> {
                         ));
                     }
                     let mut coils = Vec::new();
-                    modbus_core::unpack_coils(&content, n_coils, &mut coils)?;
+                    modbus_core::unpack_coils(&content, n_coils, &mut coils)
+                        .map_err(|e| format!("Failed to unpack coils: {e}"))?;
                     buf.truncate(content_len);
                     Ok(Response::ReadCoils(
                         Coils::from_bools(&coils, &mut buf).unwrap(),
@@ -48,10 +49,12 @@ pub fn respond(request: Vec<u8>) -> Result<Vec<u8>, modbus_core::Error> {
                 hdr,
                 pdu: ResponsePdu(response_pdu),
             };
-            encode_response(response_adu, &mut response).map(|n_bytes_written| {
-                response.truncate(n_bytes_written);
-                response
-            })
+            encode_response(response_adu, &mut response)
+                .map(|n_bytes_written| {
+                    response.truncate(n_bytes_written);
+                    response
+                })
+                .map_err(|e| format!("Failed encoding the response: {e}"))
         }
         Err(_) => todo!("handle error decoding request"),
     }
