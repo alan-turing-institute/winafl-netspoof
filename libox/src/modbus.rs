@@ -27,7 +27,7 @@ pub fn respond(request: Vec<u8>) -> Result<Vec<u8>, String> {
                             "[modbus] Fuzzer content wasn't expect length of {content_len}!"
                         ));
                     }
-                    let mut coils = Vec::new();
+                    let mut coils = Vec::with_capacity(content_len);
                     modbus_core::unpack_coils(&content, n_coils, &mut coils)
                         .map_err(|e| format!("Failed to unpack coils: {e}"))?;
                     buf.truncate(content_len);
