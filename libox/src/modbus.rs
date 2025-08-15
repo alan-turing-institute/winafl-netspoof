@@ -30,7 +30,7 @@ pub fn respond(request: Vec<u8>) -> Result<Vec<u8>, String> {
                 ));
             }
             // Initialise a coil array with dummy values.
-            let mut coils = vec![false; content_len];
+            let mut coils = vec![false; n_coils];
             // Unpack the bytes from the fuzzer into the coil array.
             modbus_core::unpack_coils(&content, n_coils, &mut coils)
                 .map_err(|e| format!("Failed to unpack coils: {e}"))?;
