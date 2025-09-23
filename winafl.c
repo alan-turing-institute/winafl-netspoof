@@ -65,6 +65,7 @@
 // Functions exposed by libinject.
 extern void libinject_init(unsigned int id);
 extern void libinject_exit(void);
+extern void libinject_warn(const char *msg);
 extern void emit_fuzz_softstart(void);
 extern void emit_fuzz_softrollback(void);
 extern void emit_fuzz_restart(void);
@@ -503,7 +504,8 @@ pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
 			else {
 				char errorMessage[] = "unrecognized command received over pipe: ";
 				errorMessage[sizeof(errorMessage)-2] = command;
-				DR_ASSERT_MSG(false, errorMessage);
+        libinject_warn(errorMessage);
+				// DR_ASSERT_MSG(false, errorMessage);
 			}
 		}
 	}
@@ -547,7 +549,8 @@ pre_fuzz_handler(void *wrapcxt, INOUT void **user_data)
             if(command == 'Q') {
                 dr_exit_process(0);
             } else {
-                DR_ASSERT_MSG(false, "unrecognized command received over pipe");
+                libinject_warn("unrecognized command received over pipe");
+                // DR_ASSERT_MSG(false, "unrecognized command received over pipe");
             }
         }
     } else {
