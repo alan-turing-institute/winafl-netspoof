@@ -872,6 +872,26 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
 }
 
 static void
+wrap_memcmp_if_present(void)
+{
+    const char *candidates[] = { "ucrtbase.dll", "msvcrt.dll", "vcruntime140.dll", "ntdll.dll" };
+    const char *names[] = { "memcmp", "_memcmp", "RtlCompareMemory", "memcmp_s" };
+    for (int m = 0; m < sizeof(candidates)/sizeof(candidates[0]); ++m) {
+        HMODULE h = GetModuleHandleA(candidates[m]);
+        if (h == NULL) continue;
+        dr_fprintf(STDERR, "Already-loaded module present: %s (h=%p)\n", candidates[m], h);
+        for (int i = 0; i < sizeof(names)/sizeof(names[0]); ++i) {
+            FARPROC p = GetProcAddress(h, names[i]);
+            if (p != NULL) {
+                bool ok = drwrap_wrap((app_pc)p, pre_memcmp_hook, NULL);
+                dr_fprintf(STDERR, "Tried wrapping %s!%s -> %s\n",
+                           candidates[m], names[i], ok ? "ok" : "fail");
+            }
+        }
+    }
+}
+
+static void
 event_exit(void)
 {
     libinject_exit();
@@ -1146,6 +1166,8 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
     drmgr_register_module_load_event(event_module_load);
     drmgr_register_module_unload_event(event_module_unload);
     dr_register_nudge_event(event_nudge, id);
+   
+    wrap_memcmp_if_present();
 
     client_id = id;
 
