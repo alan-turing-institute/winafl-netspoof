@@ -306,6 +306,74 @@ static void event_thread_exit(void *drcontext)
   dr_thread_free(drcontext, data, 2 * sizeof(void *));
 }
 
+static void
+cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
+{
+    // Only instrument compare instructions
+    int opcode = instr_get_opcode(instr);
+    if (opcode == OP_cmp || opcode == OP_test ||
+        opcode == OP_cmpsb || opcode == OP_cmpsw || opcode == OP_cmpsd || opcode == OP_cmpsq) {
+
+        // Insert a clean call to handle AFL bitmap update
+        dr_insert_clean_call(drcontext, bb, instr,
+                             (void *)cmp_coverage_probe, false, 1,
+                             OPND_CREATE_INTPTR(instr_get_app_pc(instr)));
+    }
+}
+
+// Clean call executed at runtime
+static void
+cmp_coverage_probe(app_pc instr_pc)
+{
+    // Get thread-local data
+    void **thread_data = (void **)drmgr_get_tls_field(dr_get_current_drcontext(),
+                                                     winafl_tls_field);
+    if (!thread_data) return;
+
+    unsigned char *afl_area = (unsigned char *)thread_data[1]; // shm bitmap
+    uint32_t prev_loc = (uint32_t)(uintptr_t)thread_data[0];
+
+    // Hash current instruction address for bitmap index
+    uint32_t cur_loc = ((uint32_t)((uintptr_t)instr_pc >> 4)) & (MAP_SIZE - 1);
+
+    // Update AFL bitmap (XOR prev/cur)
+    afl_area[cur_loc ^ prev_loc]++;
+    thread_data[0] = cur_loc >> 1;  // shift as in edge coverage
+}
+
+// Called from your combined BB callback
+static dr_emit_flags_t
+cmp_coverage(void *drcontext, void *tag, instrlist_t *bb,
+             instr_t *instr, bool for_trace, bool translating,
+             void *user_data)
+{
+    // Lookup module for this instruction
+    module_entry_t *mod_entry = module_table_lookup(winafl_data.cache,
+                                                    NUM_THREAD_MODULE_CACHE,
+                                                    module_table,
+                                                    dr_fragment_app_pc(tag));
+    if (!mod_entry || !mod_entry->data) return DR_EMIT_DEFAULT;
+
+    const char *module_name = dr_module_preferred_name(mod_entry->data);
+
+    // Only instrument target modules
+    target_module_t *target_modules = options.target_modules;
+    bool should_instrument = false;
+    while (target_modules) {
+        if (_stricmp(module_name, target_modules->module_name) == 0) {
+            should_instrument = true;
+            break;
+        }
+        target_modules = target_modules->next;
+    }
+    if (!should_instrument) return DR_EMIT_DEFAULT;
+
+    // Instrument the current instruction if it is a compare
+    cmp_instrument_instruction(drcontext, bb, instr);
+
+    return DR_EMIT_DEFAULT | DR_EMIT_PERSISTABLE;
+}
+
 static dr_emit_flags_t
 instrument_bb_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
                       bool for_trace, bool translating, void *user_data)
@@ -391,6 +459,14 @@ instrument_bb_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *ins
     drreg_unreserve_aflags(drcontext, bb, inst);
 
     return ret;
+}
+
+static dr_emit_flags_t
+instrument_bb_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
+                      bool for_trace, bool translating, void *user_data)
+{
+  instrument_bb_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  cmp_coverage(drcontext, tag, bb, instr, for_trace, translating, user_data);
 }
 
 static dr_emit_flags_t
@@ -500,6 +576,14 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     drreg_unreserve_aflags(drcontext, bb, inst);
 
     return ret;
+}
+
+static dr_emit_flags_t
+instrument_edge_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
+                      bool for_trace, bool translating, void *user_data)
+{
+  instrument_edge_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  cmp_coverage(drcontext, tag, bb, instr, for_trace, translating, user_data);
 }
 
 static void
@@ -1197,9 +1281,9 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
     drmgr_register_exception_event(onexception);
 
     if(options.coverage_kind == COVERAGE_BB) {
-        drmgr_register_bb_instrumentation_event(NULL, instrument_bb_coverage, NULL);
+        drmgr_register_bb_instrumentation_event(NULL, instrument_bb_coverage_combined, NULL);
     } else if(options.coverage_kind == COVERAGE_EDGE) {
-        drmgr_register_bb_instrumentation_event(NULL, instrument_edge_coverage, NULL);
+        drmgr_register_bb_instrumentation_event(NULL, instrument_edge_coverage_combined, NULL);
     }
 
     drmgr_register_module_load_event(event_module_load);
