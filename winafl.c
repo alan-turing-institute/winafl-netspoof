@@ -626,6 +626,23 @@ post_fuzz_handler(void *wrapcxt, void *user_data)
 	drwrap_redirect_execution(wrapcxt);
 }
 
+static void debug_map_hit(const char *tag, app_pc ret_addr, module_entry_t *mod_entry,
+                          uint32_t prev, uint32_t offset, uint32_t base, uint32_t idx,
+                          uint8_t oldv, uint8_t newv)
+{
+    if (!options.debug_mode) return;
+    if (mod_entry && mod_entry->data) {
+        dr_fprintf(winafl_data.log,
+                   "[DBG:%s] ret=%p mod=%s mod_start=%p offset=%u prev=%u base=%u idx=%u old=%u new=%u\n",
+                   tag, ret_addr, dr_module_preferred_name(mod_entry->data),
+                   mod_entry->data->start, offset, prev, base, idx, oldv, newv);
+    } else {
+        dr_fprintf(winafl_data.log,
+                   "[DBG:%s] ret=%p mod=<none> offset=%u prev=%u base=%u idx=%u old=%u new=%u\n",
+                   tag, ret_addr, offset, prev, base, idx, oldv, newv);
+    }
+}
+
 static void
 pre_memcmp_hook(void *wrapcxt, INOUT void **user_data)
 {
