@@ -656,12 +656,12 @@ static void debug_map_hit(const char *tag, app_pc ret_addr, module_entry_t *mod_
 {
     if (!options.debug_mode) return;
     if (mod_entry && mod_entry->data) {
-        dr_fprintf(winafl_data.log,
+        dr_fprintf(STDERR,
                    "[DBG:%s] ret=%p mod=%s mod_start=%p offset=%u prev=%u base=%u idx=%u old=%u new=%u\n",
                    tag, ret_addr, dr_module_preferred_name(mod_entry->data),
                    mod_entry->data->start, offset, prev, base, idx, oldv, newv);
     } else {
-        dr_fprintf(winafl_data.log,
+        dr_fprintf(STDERR,
                    "[DBG:%s] ret=%p mod=<none> offset=%u prev=%u base=%u idx=%u old=%u new=%u\n",
                    tag, ret_addr, offset, prev, base, idx, oldv, newv);
     }
