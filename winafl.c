@@ -630,69 +630,67 @@ static void
 pre_memcmp_hook(void *wrapcxt, INOUT void **user_data)
 {
     void *drcontext = drwrap_get_drcontext(wrapcxt);
+    if (!drcontext) return;
 
-    /* get args: memcmp(const void *a, const void *b, size_t n) */
-    const void *a = drwrap_get_arg(wrapcxt, 0);
-    const void *b = drwrap_get_arg(wrapcxt, 1);
-    size_t n = (size_t)drwrap_get_arg(wrapcxt, 2);
+    /* memcmp(a,b,n) */
+    const void *a = (const void *)drwrap_get_arg(wrapcxt, 0);
+    const void *b = (const void *)drwrap_get_arg(wrapcxt, 1);
+    size_t n = (size_t)(uintptr_t)drwrap_get_arg(wrapcxt, 2);
+    if (n == 0 || a == NULL || b == NULL) return;
 
-    /* get thread-local prev and area pointer (same layout you used in pre_fuzz_handler) */
+    /* TLS layout: thread_data[0] = prev, thread_data[1] = afl_area */
     void **thread_data = (void **)drmgr_get_tls_field(drcontext, winafl_tls_field);
     if (thread_data == NULL) return;
 
-    /* thread_data[0] = prev, thread_data[1] = afl_area (set in pre_fuzz_handler) */
-    uint32_t prev = (uint32_t)(uintptr_t)thread_data[0];
+    uint64_t raw_prev_ptr = (uint64_t)(uintptr_t)thread_data[0]; /* pointer-sized storage */
     uint8_t *afl_area = (uint8_t *)thread_data[1];
     if (afl_area == NULL) return;
 
-    /* obtain return address (call site in the app that called memcmp) */
+    /* Prev is stored as a 32-bit value in the TLS slot by the edge instrumentation.
+       Truncate/fit it into 32 bits safely. */
+    uint32_t prev = (uint32_t)raw_prev_ptr;
+
+    /* get return address (call-site). preferred DR API */
     app_pc ret_addr = (app_pc)drwrap_get_retaddr(wrapcxt);
     if (ret_addr == NULL) {
-        /* fallback: _ReturnAddress intrinsic (works on MSVC/clang) */
 #if defined(_MSC_VER) || defined(__clang__) || defined(__GNUC__)
         ret_addr = (app_pc)_ReturnAddress();
+#else
+        return; /* cannot get return address */
 #endif
     }
 
-    /* compute an offset compatible with your instrumentation:
-       prefer module-based offset (start_pc - module_start) so XOR location lines up */
-    uint32_t offset = 0;
-    module_entry_t *mod_entry = NULL;
-    if (ret_addr != NULL) {
-        mod_entry = module_table_lookup(winafl_data.cache, NUM_THREAD_MODULE_CACHE, module_table, ret_addr);
-    }
-
+    /* Determine offset consistent with the edge instrumentation */
+    uint32_t offset;
+    module_entry_t *mod_entry = module_table_lookup(winafl_data.cache, NUM_THREAD_MODULE_CACHE, module_table, ret_addr);
     if (mod_entry != NULL && mod_entry->data != NULL) {
-        /* same computation used in instrument_edge_coverage: offset = start_pc - module_start; mask */
-        uint64_t off64 = (uint64_t)(ret_addr - mod_entry->data->start);
-        offset = (uint32_t)(off64 & (MAP_SIZE - 1));
+        uintptr_t mod_start = (uintptr_t)mod_entry->data->start;
+        uintptr_t diff = (uintptr_t)ret_addr - mod_start;
+        offset = (uint32_t)(diff & (MAP_SIZE - 1));
     } else {
-        /* fallback hash if we don't have module info */
+        /* fallback deterministic mix */
         uintptr_t r = (uintptr_t)ret_addr;
-        uint32_t mixed = (uint32_t)(((r >> 4) ^ (r << 8)) & (MAP_SIZE - 1));
-        offset = mixed;
+        offset = (uint32_t)(((r >> 4) ^ (r << 8)) & (MAP_SIZE - 1));
     }
 
-    /* mask and map size convenience */
     uint32_t mask = MAP_SIZE - 1;
+    uint32_t base = (prev ^ offset) & mask;
 
-    /* perform prefix scan up to MAX_CMP_LEN and increment afl bytes at (prev ^ offset + i) */
+    /* clamp length */
     size_t L = n < MAX_CMP_LEN ? n : MAX_CMP_LEN;
     const uint8_t *pa = (const uint8_t *)a;
     const uint8_t *pb = (const uint8_t *)b;
 
     for (size_t i = 0; i < L; ++i) {
         if (pa[i] != pb[i]) break;
-        /* compute index = (prev ^ offset) & mask, then add i (wrap) */
-        uint32_t base = (prev ^ offset) & mask;
         uint32_t idx = (base + (uint32_t)i) & mask;
-        /* volatile read/modify/write so compiler does not optimize out */
+        /* volatile RMW; capture old/new for debug */
         volatile uint8_t *p = (volatile uint8_t *)&afl_area[idx];
-        uint8_t v = *p;
-        *p = (uint8_t)(v + 1);
+        uint8_t oldv = *p;
+        *p = (uint8_t)(oldv + 1);
+        uint8_t newv = *p;
+        debug_map_hit("memcmp", ret_addr, mod_entry, prev, offset, base, idx, oldv, newv);
     }
-
-    /* DO NOT modify arguments or return value; the original memcmp will be called automatically */
 }
 
 static void
