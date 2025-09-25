@@ -63,6 +63,30 @@
 #define STATUS_HEAP_CORRUPTION 0xC0000374
 #endif
 
+/* small utility to remember which addresses we wrapped so we don't double-wrap */
+#define MAX_WRAPPED 256
+static app_pc wrapped_addrs[MAX_WRAPPED];
+static int wrapped_count = 0;
+
+static bool already_wrapped(app_pc addr) {
+    for (int i = 0; i < wrapped_count; ++i) {
+        if (wrapped_addrs[i] == addr) return true;
+    }
+    return false;
+}
+static void remember_wrapped(app_pc addr) {
+    if (wrapped_count < MAX_WRAPPED) wrapped_addrs[wrapped_count++] = addr;
+}
+
+/* list of candidate compare symbols to try wrapping */
+static const char *compare_symbols[] = {
+    "memcmp", "_memcmp", "memcmp_s",     /* CRT variants */
+    "strcmp", "_strcmp", "strncmp", "_strncmp",
+    "_stricmp", "_strnicmp", "wmemcmp",
+    "RtlCompareMemory", "RtlEqualMemory", /* ntdll/kernel helpers */
+    NULL
+};
+
 // Functions exposed by libinject.
 extern void libinject_init(unsigned int id);
 extern void libinject_exit(void);
@@ -784,6 +808,35 @@ unhandledexceptionfilter_interceptor_pre(void *wrapcxt, INOUT void **user_data)
 }
 
 static void
+wrap_compare_symbols_in_module(HMODULE module_handle, const char *name_prefix)
+{
+    if (module_handle == NULL) return;
+
+    for (const char **sym = compare_symbols; *sym != NULL; ++sym) {
+        FARPROC fp = GetProcAddress(module_handle, *sym);
+        if (fp == NULL) continue;
+
+        app_pc fn = (app_pc)fp;
+        if (already_wrapped(fn)) {
+            if (options.debug_mode)
+                dr_fprintf(STDERR, "[DBG] skip already-wrapped %s!%s @%p\n",
+                           name_prefix, *sym, fn);
+            continue;
+        }
+
+        /* use drwrap_wrap_ex if you want flags; here DRWRAP_FLAGS_NONE is safe */
+        bool ok = drwrap_wrap_ex(fn, pre_memcmp_hook, NULL, NULL, DRWRAP_FLAGS_NONE);
+        if (!ok) {
+            /* fallback to simpler API */
+            ok = drwrap_wrap(fn, pre_memcmp_hook, NULL);
+        }
+        dr_fprintf(STDERR, "[DBG] try wrap %s!%s -> %s (addr=%p)\n",
+                   name_prefix, *sym, ok ? "ok" : "fail", fn);
+        if (ok) remember_wrapped(fn);
+    }
+}
+
+static void
 event_module_unload(void *drcontext, const module_data_t *info)
 {
     module_table_unload(module_table, info);
@@ -812,18 +865,12 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
 
     if (_stricmp(module_name, "msvcrt.dll") == 0 ||
         _stricmp(module_name, "ucrtbase.dll") == 0 ||
+        _stricmp(module_name, "vcruntime140.dll") == 0 ||
         _stricmp(module_name, "ntdll.dll") == 0) {
 
-        app_pc to_wrap = (app_pc)dr_get_proc_address(info->handle, "memcmp");
-        if (to_wrap != NULL) {
-            bool res = drwrap_wrap(to_wrap, pre_memcmp_hook, NULL);
-            dr_fprintf(STDERR, "wrapped memcmp at %p? %s\n", to_wrap, res ? "yes":"no");
-        }
-
-        // optionally also hook strcmp/strncmp/_stricmp etc.
+        HMODULE h = (HMODULE)info->handle;
+        wrap_compare_symbols_in_module(h, module_name);
     }
-
-
 
     if (_stricmp(module_name, "WS2_32.dll") == 0) {
 
@@ -871,22 +918,14 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
     module_table_load(module_table, info);
 }
 
-static void
-wrap_memcmp_if_present(void)
+static void wrap_preloaded_crts(void)
 {
-    const char *candidates[] = { "ucrtbase.dll", "msvcrt.dll", "vcruntime140.dll", "ntdll.dll" };
-    const char *names[] = { "memcmp", "_memcmp", "RtlCompareMemory", "memcmp_s" };
-    for (int m = 0; m < sizeof(candidates)/sizeof(candidates[0]); ++m) {
-        HMODULE h = GetModuleHandleA(candidates[m]);
-        if (h == NULL) continue;
-        dr_fprintf(STDERR, "Already-loaded module present: %s (h=%p)\n", candidates[m], h);
-        for (int i = 0; i < sizeof(names)/sizeof(names[0]); ++i) {
-            FARPROC p = GetProcAddress(h, names[i]);
-            if (p != NULL) {
-                bool ok = drwrap_wrap((app_pc)p, pre_memcmp_hook, NULL);
-                dr_fprintf(STDERR, "Tried wrapping %s!%s -> %s\n",
-                           candidates[m], names[i], ok ? "ok" : "fail");
-            }
+    const char *candidates[] = { "ucrtbase.dll", "msvcrt.dll", "vcruntime140.dll", "vcruntime.dll", "ntdll.dll", NULL };
+    for (const char **m = candidates; *m != NULL; ++m) {
+        HMODULE h = GetModuleHandleA(*m);
+        if (h != NULL) {
+            dr_fprintf(winafl_data.log, "[DBG] found preloaded module %s handle=%p\n", *m, h);
+            wrap_compare_symbols_in_module(h, *m);
         }
     }
 }
@@ -1167,7 +1206,7 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
     drmgr_register_module_unload_event(event_module_unload);
     dr_register_nudge_event(event_nudge, id);
    
-    wrap_memcmp_if_present();
+    wrap_preloaded_crts();
 
     client_id = id;
 
