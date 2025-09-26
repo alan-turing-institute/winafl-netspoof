@@ -381,24 +381,18 @@ static void
 cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
 {
     int opcode = instr_get_opcode(instr);
-
     if (opcode != OP_cmp && opcode != OP_test && opcode != OP_cmps)
         return;
 
-    opnd_t src0, src1;
-    int num_srcs = instr_num_srcs(instr);
+    if (instr_num_srcs(instr) < 2)
+        return;
 
-    if (num_srcs < 2)
-        return; // unexpected form
+    opnd_t src0 = instr_get_src(instr, 0);
+    opnd_t src1 = instr_get_src(instr, 1);
 
-    src0 = instr_get_src(instr, 0);
-    src1 = instr_get_src(instr, 1);
-
-    // Determine operand size (bytes)
     int size = opnd_size_in_bytes(opnd_get_size(src0));
     if (size <= 0) size = 1;
 
-    // Pick scratch registers
 #ifdef X86_64
     reg_id_t scratch1 = DR_REG_R10;
     reg_id_t scratch2 = DR_REG_R11;
@@ -410,38 +404,30 @@ cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
     dr_save_reg(drcontext, bb, instr, scratch1, SPILL_SLOT_1);
     dr_save_reg(drcontext, bb, instr, scratch2, SPILL_SLOT_2);
 
-    opnd_t arg0 = OPND_CREATE_INTPTR(instr_get_app_pc(instr));
-    opnd_t arg1, arg2;
-
-    // Left operand
-    if (opnd_is_memory_reference(src0)) {
+    if (opnd_is_memory_reference(src0))
         drutil_insert_get_mem_addr(drcontext, bb, instr, src0, scratch1, scratch2);
-        arg1 = OPND_CREATE_REG(scratch1);
-    } else if (opnd_is_reg(src0)) {
-        arg1 = OPND_CREATE_REG(opnd_get_reg(src0));
-    } else if (opnd_is_immed(src0)) {
-        arg1 = OPND_CREATE_INTPTR((uintptr_t)opnd_get_immed_int(src0));
-    } else {
-        arg1 = OPND_CREATE_INTPTR(0);
-    }
 
-    // Right operand
-    if (opnd_is_memory_reference(src1)) {
-        drutil_insert_get_mem_addr(drcontext, bb, instr, src1, scratch1, scratch2);
-        arg2 = OPND_CREATE_REG(scratch1);
-    } else if (opnd_is_reg(src1)) {
-        arg2 = OPND_CREATE_REG(opnd_get_reg(src1));
-    } else if (opnd_is_immed(src1)) {
-        arg2 = OPND_CREATE_INTPTR((uintptr_t)opnd_get_immed_int(src1));
-    } else {
-        arg2 = OPND_CREATE_INTPTR(0);
-    }
+    if (opnd_is_memory_reference(src1))
+        drutil_insert_get_mem_addr(drcontext, bb, instr, src1, scratch2, scratch1);
 
-    opnd_t arg3 = OPND_CREATE_INT32(size);
-
+    /* Insert the clean call with inline OPND_CREATE_* expressions */
     dr_insert_clean_call(drcontext, bb, instr,
                          (void *)cmp_coverage_probe_cmp, false, 4,
-                         arg0, arg1, arg2, arg3);
+                         OPND_CREATE_INTPTR(instr_get_app_pc(instr)),
+
+                         /* left operand */
+                         opnd_is_memory_reference(src0) ? OPND_CREATE_REG(scratch1) :
+                         opnd_is_reg(src0) ? OPND_CREATE_REG(opnd_get_reg(src0)) :
+                         opnd_is_immed(src0) ? OPND_CREATE_INTPTR((uintptr_t)opnd_get_immed_int(src0)) :
+                         OPND_CREATE_INTPTR(0),
+
+                         /* right operand */
+                         opnd_is_memory_reference(src1) ? OPND_CREATE_REG(scratch2) :
+                         opnd_is_reg(src1) ? OPND_CREATE_REG(opnd_get_reg(src1)) :
+                         opnd_is_immed(src1) ? OPND_CREATE_INTPTR((uintptr_t)opnd_get_immed_int(src1)) :
+                         OPND_CREATE_INTPTR(0),
+
+                         OPND_CREATE_INT32(size));
 
     dr_restore_reg(drcontext, bb, instr, scratch2, SPILL_SLOT_2);
     dr_restore_reg(drcontext, bb, instr, scratch1, SPILL_SLOT_1);
