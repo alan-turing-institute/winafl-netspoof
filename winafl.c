@@ -1010,7 +1010,7 @@ static void wrap_preloaded_crts(void)
     for (const char **m = candidates; *m != NULL; ++m) {
         HMODULE h = GetModuleHandleA(*m);
         if (h != NULL) {
-            dr_fprintf(winafl_data.log, "[DBG] found preloaded module %s handle=%p\n", *m, h);
+            dr_fprintf(STDERR, "[DBG] found preloaded module %s handle=%p\n", *m, h);
             wrap_compare_symbols_in_module(h, *m);
         }
     }
