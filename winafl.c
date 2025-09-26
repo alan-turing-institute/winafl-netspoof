@@ -381,7 +381,7 @@ static void
 cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
 {
     int opcode = instr_get_opcode(instr);
-    if (opcode != OP_cmp && opcode != OP_test && opcode != OP_cmps)
+    if (opcode != OP_cmp && opcode != OP_test)
         return;
 
     if (instr_num_srcs(instr) < 2)
@@ -401,37 +401,51 @@ cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
     reg_id_t scratch2 = DR_REG_ECX;
 #endif
 
+    // Save scratch registers
     dr_save_reg(drcontext, bb, instr, scratch1, SPILL_SLOT_1);
     dr_save_reg(drcontext, bb, instr, scratch2, SPILL_SLOT_2);
 
-    if (opnd_is_memory_reference(src0))
+    uintptr_t left_val = 0;
+    uintptr_t right_val = 0;
+
+    // Compute left operand value or address
+    if (opnd_is_memory_reference(src0)) {
         drutil_insert_get_mem_addr(drcontext, bb, instr, src0, scratch1, scratch2);
+        left_val = (uintptr_t)scratch1; // pass EA as integer
+    } else if (opnd_is_reg(src0)) {
+        // Read the register value into scratch1
+        dr_insert_read_raw_tls(drcontext, scratch1, opnd_get_reg(src0));
+        left_val = (uintptr_t)scratch1;
+    } else if (opnd_is_immed(src0)) {
+        left_val = (uintptr_t)opnd_get_immed_int(src0);
+    }
 
-    if (opnd_is_memory_reference(src1))
+    // Compute right operand value or address
+    if (opnd_is_memory_reference(src1)) {
         drutil_insert_get_mem_addr(drcontext, bb, instr, src1, scratch2, scratch1);
+        right_val = (uintptr_t)scratch2; // pass EA as integer
+    } else if (opnd_is_reg(src1)) {
+        // Read the register value into scratch2
+        dr_insert_read_raw_tls(drcontext, scratch2, opnd_get_reg(src1));
+        right_val = (uintptr_t)scratch2;
+    } else if (opnd_is_immed(src1)) {
+        right_val = (uintptr_t)opnd_get_immed_int(src1);
+    }
 
-    /* Insert the clean call with inline OPND_CREATE_* expressions */
+    // Insert clean call with integer/pointer arguments
     dr_insert_clean_call(drcontext, bb, instr,
-                         (void *)cmp_coverage_probe_cmp, false, 4,
+                         (void *)cmp_coverage_probe_cmp,
+                         false, 4,
                          OPND_CREATE_INTPTR(instr_get_app_pc(instr)),
-
-                         /* left operand */
-                         opnd_is_memory_reference(src0) ? OPND_CREATE_REG(scratch1) :
-                         opnd_is_reg(src0) ? OPND_CREATE_REG(opnd_get_reg(src0)) :
-                         opnd_is_immed(src0) ? OPND_CREATE_INTPTR((uintptr_t)opnd_get_immed_int(src0)) :
-                         OPND_CREATE_INTPTR(0),
-
-                         /* right operand */
-                         opnd_is_memory_reference(src1) ? OPND_CREATE_REG(scratch2) :
-                         opnd_is_reg(src1) ? OPND_CREATE_REG(opnd_get_reg(src1)) :
-                         opnd_is_immed(src1) ? OPND_CREATE_INTPTR((uintptr_t)opnd_get_immed_int(src1)) :
-                         OPND_CREATE_INTPTR(0),
-
+                         OPND_CREATE_INTPTR(left_val),
+                         OPND_CREATE_INTPTR(right_val),
                          OPND_CREATE_INT32(size));
 
+    // Restore scratch registers
     dr_restore_reg(drcontext, bb, instr, scratch2, SPILL_SLOT_2);
     dr_restore_reg(drcontext, bb, instr, scratch1, SPILL_SLOT_1);
 }
+
 
 // static void
 // cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
