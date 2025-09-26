@@ -346,8 +346,6 @@ cmp_coverage(void *drcontext, void *tag, instrlist_t *bb,
              instr_t *instr, bool for_trace, bool translating,
              void *user_data)
 {
-      if (!drmgr_is_first_instr(drcontext, inst))
-        return DR_EMIT_DEFAULT;
 
     // Lookup module for this instruction
     module_entry_t *mod_entry = module_table_lookup(winafl_data.cache,
@@ -467,8 +465,9 @@ static dr_emit_flags_t
 instrument_bb_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
                       bool for_trace, bool translating, void *user_data)
 {
-  instrument_bb_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
-  cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  dr_emit_flags_t f1 = instrument_bb_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  dr_emit_flags_t f2 = cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  return f1 | f2;
 }
 
 static dr_emit_flags_t
@@ -584,8 +583,9 @@ static dr_emit_flags_t
 instrument_edge_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
                       bool for_trace, bool translating, void *user_data)
 {
-  instrument_edge_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
-  cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  dr_emit_flags_t f1 = instrument_edge_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  dr_emit_flags_t f2 = cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  return f1 | f2;
 }
 
 static void
