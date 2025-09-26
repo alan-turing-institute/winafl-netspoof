@@ -347,6 +347,9 @@ cmp_coverage(void *drcontext, void *tag, instrlist_t *bb,
              instr_t *instr, bool for_trace, bool translating,
              void *user_data)
 {
+      if (!drmgr_is_first_instr(drcontext, inst))
+        return DR_EMIT_DEFAULT;
+
     // Lookup module for this instruction
     module_entry_t *mod_entry = module_table_lookup(winafl_data.cache,
                                                     NUM_THREAD_MODULE_CACHE,
