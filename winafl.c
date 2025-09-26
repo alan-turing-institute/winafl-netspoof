@@ -306,21 +306,6 @@ static void event_thread_exit(void *drcontext)
   dr_thread_free(drcontext, data, 2 * sizeof(void *));
 }
 
-static void
-cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
-{
-    // Only instrument compare instructions
-    int opcode = instr_get_opcode(instr);
-    if (opcode == OP_cmp || opcode == OP_test ||
-        opcode == OP_cmpsb || opcode == OP_cmpsw || opcode == OP_cmpsd || opcode == OP_cmpsq) {
-
-        // Insert a clean call to handle AFL bitmap update
-        dr_insert_clean_call(drcontext, bb, instr,
-                             (void *)cmp_coverage_probe, false, 1,
-                             OPND_CREATE_INTPTR(instr_get_app_pc(instr)));
-    }
-}
-
 // Clean call executed at runtime
 static void
 cmp_coverage_probe(app_pc instr_pc)
@@ -339,6 +324,20 @@ cmp_coverage_probe(app_pc instr_pc)
     // Update AFL bitmap (XOR prev/cur)
     afl_area[cur_loc ^ prev_loc]++;
     thread_data[0] = cur_loc >> 1;  // shift as in edge coverage
+}
+
+static void
+cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
+{
+    // Only instrument compare instructions
+    int opcode = instr_get_opcode(instr);
+    if (opcode == OP_cmp || opcode == OP_test || opcode == OP_cmps) {
+
+        // Insert a clean call to handle AFL bitmap update
+        dr_insert_clean_call(drcontext, bb, instr,
+                             (void *)cmp_coverage_probe, false, 1,
+                             OPND_CREATE_INTPTR(instr_get_app_pc(instr)));
+    }
 }
 
 // Called from your combined BB callback
@@ -469,7 +468,7 @@ instrument_bb_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, ins
                       bool for_trace, bool translating, void *user_data)
 {
   instrument_bb_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
-  cmp_coverage(drcontext, tag, bb, instr, for_trace, translating, user_data);
+  cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
 }
 
 static dr_emit_flags_t
@@ -586,7 +585,7 @@ instrument_edge_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, i
                       bool for_trace, bool translating, void *user_data)
 {
   instrument_edge_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
-  cmp_coverage(drcontext, tag, bb, instr, for_trace, translating, user_data);
+  cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
 }
 
 static void
