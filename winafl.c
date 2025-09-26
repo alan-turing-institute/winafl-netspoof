@@ -310,6 +310,37 @@ static void event_thread_exit(void *drcontext)
 
 static const unsigned char target_bytes[4] = {87, 111, 114, 108};
 
+// Helper function: read a memory or register operand into buf
+static void read_operand(uintptr_t op, unsigned char *buf, size_t n, dr_mcontext_t *mc)
+{
+    if (op > 0x1000) { // memory address
+        dr_safe_read((const byte *)op, n, buf, NULL);
+    } else { // register ID
+        uint64_t reg_val = 0;
+        switch ((reg_id_t)op) {
+            case DR_REG_RAX: reg_val = mc->rax; break;
+            case DR_REG_RCX: reg_val = mc->rcx; break;
+            case DR_REG_RDX: reg_val = mc->rdx; break;
+            case DR_REG_RBX: reg_val = mc->rbx; break;
+            case DR_REG_RSP: reg_val = mc->rsp; break;
+            case DR_REG_RBP: reg_val = mc->rbp; break;
+            case DR_REG_RSI: reg_val = mc->rsi; break;
+            case DR_REG_RDI: reg_val = mc->rdi; break;
+            case DR_REG_R8:  reg_val = mc->r8;  break;
+            case DR_REG_R9:  reg_val = mc->r9;  break;
+            case DR_REG_R10: reg_val = mc->r10; break;
+            case DR_REG_R11: reg_val = mc->r11; break;
+            case DR_REG_R12: reg_val = mc->r12; break;
+            case DR_REG_R13: reg_val = mc->r13; break;
+            case DR_REG_R14: reg_val = mc->r14; break;
+            case DR_REG_R15: reg_val = mc->r15; break;
+            default: reg_val = 0; break;
+        }
+        for (size_t i = 0; i < n && i < sizeof(uint64_t); ++i)
+            buf[i] = (reg_val >> (i*8)) & 0xFF;
+    }
+}
+
 static void
 cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_operand, uintptr_t right_operand, uintptr_t len)
 {
@@ -334,38 +365,8 @@ cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_operand, uintptr_t right_
     dr_mcontext_t mc = { sizeof(mc), DR_MC_ALL };
     dr_get_mcontext(dr_get_current_drcontext(), &mc);
 
-    // Helper lambda to read value: memory EA vs register ID
-    auto read_operand = [&](uintptr_t op, unsigned char *buf, size_t n) {
-        if (op > 0x1000) { // crude heuristic: treat >4k as memory address
-            dr_safe_read((const byte *)op, n, buf, NULL);
-        } else { // treat as register ID
-            uint64_t reg_val = 0;
-            switch ((reg_id_t)op) {
-                case DR_REG_RAX: reg_val = mc.rax; break;
-                case DR_REG_RCX: reg_val = mc.rcx; break;
-                case DR_REG_RDX: reg_val = mc.rdx; break;
-                case DR_REG_RBX: reg_val = mc.rbx; break;
-                case DR_REG_RSP: reg_val = mc.rsp; break;
-                case DR_REG_RBP: reg_val = mc.rbp; break;
-                case DR_REG_RSI: reg_val = mc.rsi; break;
-                case DR_REG_RDI: reg_val = mc.rdi; break;
-                case DR_REG_R8:  reg_val = mc.r8;  break;
-                case DR_REG_R9:  reg_val = mc.r9;  break;
-                case DR_REG_R10: reg_val = mc.r10; break;
-                case DR_REG_R11: reg_val = mc.r11; break;
-                case DR_REG_R12: reg_val = mc.r12; break;
-                case DR_REG_R13: reg_val = mc.r13; break;
-                case DR_REG_R14: reg_val = mc.r14; break;
-                case DR_REG_R15: reg_val = mc.r15; break;
-                default: reg_val = 0; break;
-            }
-            for (size_t i = 0; i < n && i < sizeof(uint64_t); ++i)
-                buf[i] = (reg_val >> (i*8)) & 0xFF;
-        }
-    };
-
-    read_operand(left_operand, left_buf, max_len);
-    read_operand(right_operand, right_buf, max_len);
+    read_operand(left_operand, left_buf, max_len, &mc);
+    read_operand(right_operand, right_buf, max_len, &mc);
 
     // Compute leading match bytes
     size_t match = 0;
