@@ -311,7 +311,7 @@ static void event_thread_exit(void *drcontext)
 static const unsigned char target_bytes[4] = {87, 111, 114, 108};
 
 static void
-cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_ptr, uintptr_t right_ptr, uintptr_t len)
+cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_operand, uintptr_t right_operand, uintptr_t len)
 {
     // get thread-local fields (same layout as your other clean-call)
     void **thread_data = (void **)drmgr_get_tls_field(dr_get_current_drcontext(),
@@ -326,65 +326,77 @@ cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_ptr, uintptr_t right_ptr,
     uint32_t idx = cur_loc ^ prev_loc;
     if (idx >= MAP_SIZE) idx &= (MAP_SIZE - 1);
 
-    // Safely read memory up to len bytes and compute leading equal bytes.
-    // Be conservative: cap len to some small value (e.g., 64) to avoid big loops.
-    const size_t MAX_COMPARE = 128; // choose appropriate cap
+    // Prepare buffers for left and right
+    unsigned char left_buf[128] = {0}, right_buf[128] = {0};
     size_t max_len = (size_t)len;
-    if (max_len > MAX_COMPARE) max_len = MAX_COMPARE;
+    if (max_len > sizeof(left_buf)) max_len = sizeof(left_buf);
 
+    dr_mcontext_t mc = { sizeof(mc), DR_MC_ALL };
+    dr_get_mcontext(dr_get_current_drcontext(), &mc);
+
+    // Helper lambda to read value: memory EA vs register ID
+    auto read_operand = [&](uintptr_t op, unsigned char *buf, size_t n) {
+        if (op > 0x1000) { // crude heuristic: treat >4k as memory address
+            dr_safe_read((const byte *)op, n, buf, NULL);
+        } else { // treat as register ID
+            uint64_t reg_val = 0;
+            switch ((reg_id_t)op) {
+                case DR_REG_RAX: reg_val = mc.rax; break;
+                case DR_REG_RCX: reg_val = mc.rcx; break;
+                case DR_REG_RDX: reg_val = mc.rdx; break;
+                case DR_REG_RBX: reg_val = mc.rbx; break;
+                case DR_REG_RSP: reg_val = mc.rsp; break;
+                case DR_REG_RBP: reg_val = mc.rbp; break;
+                case DR_REG_RSI: reg_val = mc.rsi; break;
+                case DR_REG_RDI: reg_val = mc.rdi; break;
+                case DR_REG_R8:  reg_val = mc.r8;  break;
+                case DR_REG_R9:  reg_val = mc.r9;  break;
+                case DR_REG_R10: reg_val = mc.r10; break;
+                case DR_REG_R11: reg_val = mc.r11; break;
+                case DR_REG_R12: reg_val = mc.r12; break;
+                case DR_REG_R13: reg_val = mc.r13; break;
+                case DR_REG_R14: reg_val = mc.r14; break;
+                case DR_REG_R15: reg_val = mc.r15; break;
+                default: reg_val = 0; break;
+            }
+            for (size_t i = 0; i < n && i < sizeof(uint64_t); ++i)
+                buf[i] = (reg_val >> (i*8)) & 0xFF;
+        }
+    };
+
+    read_operand(left_operand, left_buf, max_len);
+    read_operand(right_operand, right_buf, max_len);
+
+    // Compute leading match bytes
     size_t match = 0;
-    unsigned char a = 0, b = 0;
-    size_t read_a, read_b;
-
-    // Try reading memory in a safe way; dr_safe_read_ex returns bytes_read
     for (size_t i = 0; i < max_len; ++i) {
-        read_a = dr_safe_read((byte *)left_ptr + i, 1, &a, NULL);
-        read_b = dr_safe_read((byte *)right_ptr + i, 1, &b, NULL);
-        if (read_a != 1 || read_b != 1) break; // cannot read further
-        if (a != b) break;
+        if (left_buf[i] != right_buf[i]) break;
         match++;
     }
 
-    // Now encode match into AFL bitmap at idx.
-    // Simple encoding: increment by 1 + (match & 0xFF) so larger matches change the map more.
-    // You can adapt encoding to your fuzzer's comparator-logging scheme.
+    // Update AFL bitmap
     if (match > 0) {
-        // cap to 255
         unsigned char val = (unsigned char)(1 + (match & 0xFF));
-        // atomic-ish increment (not strictly atomic; acceptable in many cases)
         afl_area[idx]++;
         afl_area[idx] += val;
     } else {
-        // still mark the edge (so fuzzer knows compare happened)
         afl_area[idx]++;
     }
-
-    // update prev_loc as edge coverage does
     thread_data[0] = cur_loc >> 1;
 
-  if (cmp_log_file) {
-        // read the first up to 8 bytes from each side (for context)
-        unsigned char left_buf[8] = {0}, right_buf[8] = {0};
-        dr_safe_read((const byte *)left_ptr, sizeof(left_buf), left_buf, NULL);
-        dr_safe_read((const byte *)right_ptr, sizeof(right_buf), right_buf, NULL);
-
-        // check for exact match of target_bytes in right side or left side
-        bool right_eq_target = true, left_eq_target = true;
-        for (int i = 0; i < 4; ++i) {
-            unsigned char rb = 0, lb = 0;
-            // safe read of the i-th byte
-            if (dr_safe_read((const byte *)right_ptr + i, 1, &rb, NULL) != 1) { right_eq_target = false; break; }
-            if (dr_safe_read((const byte *)left_ptr + i, 1, &lb, NULL) != 1) { left_eq_target = false; break; }
-            if (rb != target_bytes[i]) right_eq_target = false;
-            if (lb != target_bytes[i]) left_eq_target = false;
-        }
-
-        // Print summary line
+    // Logging
+    if (cmp_log_file) {
         dr_fprintf(cmp_log_file,
                    "CMP @%p left=%p right=%p len=%zu match=%zu left_first4=%02x%02x%02x%02x right_first4=%02x%02x%02x%02x\n",
-                   instr_pc, (void *)left_ptr, (void *)right_ptr, (size_t)len, match,
+                   instr_pc, (void *)left_operand, (void *)right_operand, len, match,
                    left_buf[0], left_buf[1], left_buf[2], left_buf[3],
                    right_buf[0], right_buf[1], right_buf[2], right_buf[3]);
+
+        bool right_eq_target = true, left_eq_target = true;
+        for (int i = 0; i < 4; ++i) {
+            if (right_buf[i] != target_bytes[i]) right_eq_target = false;
+            if (left_buf[i] != target_bytes[i]) left_eq_target = false;
+        }
 
         if (right_eq_target || left_eq_target) {
             dr_fprintf(cmp_log_file, "    >> COMPARES AGAINST TARGET [87,111,114,108] (right_eq=%d left_eq=%d)\n",
@@ -393,28 +405,8 @@ cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_ptr, uintptr_t right_ptr,
             dr_fprintf(cmp_log_file, "    partial match length = %zu\n", match);
         }
 
-        dr_flush_file(cmp_log_file); // ensure it's written
+        dr_flush_file(cmp_log_file);
     }
-}
-
-// Clean call executed at runtime
-static void
-cmp_coverage_probe(app_pc instr_pc)
-{
-    // Get thread-local data
-    void **thread_data = (void **)drmgr_get_tls_field(dr_get_current_drcontext(),
-                                                     winafl_tls_field);
-    if (!thread_data) return;
-
-    unsigned char *afl_area = (unsigned char *)thread_data[1]; // shm bitmap
-    uint32_t prev_loc = (uint32_t)(uintptr_t)thread_data[0];
-
-    // Hash current instruction address for bitmap index
-    uint32_t cur_loc = ((uint32_t)((uintptr_t)instr_pc >> 4)) & (MAP_SIZE - 1);
-
-    // Update AFL bitmap (XOR prev/cur)
-    afl_area[cur_loc ^ prev_loc]++;
-    thread_data[0] = cur_loc >> 1;  // shift as in edge coverage
 }
 
 static void
