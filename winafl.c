@@ -68,6 +68,7 @@
 #define MAX_WRAPPED 256
 static app_pc wrapped_addrs[MAX_WRAPPED];
 static int wrapped_count = 0;
+static file_t cmp_log_file = NULL;
 
 static bool already_wrapped(app_pc addr) {
     for (int i = 0; i < wrapped_count; ++i) {
@@ -307,6 +308,8 @@ static void event_thread_exit(void *drcontext)
   dr_thread_free(drcontext, data, 2 * sizeof(void *));
 }
 
+static const unsigned char target_bytes[4] = {87, 111, 114, 108};
+
 static void
 cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_ptr, uintptr_t right_ptr, uintptr_t len)
 {
@@ -330,11 +333,13 @@ cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_ptr, uintptr_t right_ptr,
     if (max_len > MAX_COMPARE) max_len = MAX_COMPARE;
 
     size_t match = 0;
+    unsigned char a = 0, b = 0;
+    size_t read_a, read_b;
+
     // Try reading memory in a safe way; dr_safe_read_ex returns bytes_read
     for (size_t i = 0; i < max_len; ++i) {
-        unsigned char a = 0, b = 0;
-        size_t read_a = dr_safe_read((byte *)left_ptr + i, 1, &a, NULL);
-        size_t read_b = dr_safe_read((byte *)right_ptr + i, 1, &b, NULL);
+        read_a = dr_safe_read((byte *)left_ptr + i, 1, &a, NULL);
+        read_b = dr_safe_read((byte *)right_ptr + i, 1, &b, NULL);
         if (read_a != 1 || read_b != 1) break; // cannot read further
         if (a != b) break;
         match++;
@@ -356,6 +361,40 @@ cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_ptr, uintptr_t right_ptr,
 
     // update prev_loc as edge coverage does
     thread_data[0] = cur_loc >> 1;
+
+  if (cmp_log_file) {
+        // read the first up to 8 bytes from each side (for context)
+        unsigned char left_buf[8] = {0}, right_buf[8] = {0};
+        dr_safe_read((const byte *)left_ptr, sizeof(left_buf), left_buf, NULL);
+        dr_safe_read((const byte *)right_ptr, sizeof(right_buf), right_buf, NULL);
+
+        // check for exact match of target_bytes in right side or left side
+        bool right_eq_target = true, left_eq_target = true;
+        for (int i = 0; i < 4; ++i) {
+            unsigned char rb = 0, lb = 0;
+            // safe read of the i-th byte
+            if (dr_safe_read((const byte *)right_ptr + i, 1, &rb, NULL) != 1) { right_eq_target = false; break; }
+            if (dr_safe_read((const byte *)left_ptr + i, 1, &lb, NULL) != 1) { left_eq_target = false; break; }
+            if (rb != target_bytes[i]) right_eq_target = false;
+            if (lb != target_bytes[i]) left_eq_target = false;
+        }
+
+        // Print summary line
+        dr_fprintf(cmp_log_file,
+                   "CMP @%p left=%p right=%p len=%zu match=%zu left_first4=%02x%02x%02x%02x right_first4=%02x%02x%02x%02x\n",
+                   instr_pc, (void *)left_ptr, (void *)right_ptr, (size_t)len, match,
+                   left_buf[0], left_buf[1], left_buf[2], left_buf[3],
+                   right_buf[0], right_buf[1], right_buf[2], right_buf[3]);
+
+        if (right_eq_target || left_eq_target) {
+            dr_fprintf(cmp_log_file, "    >> COMPARES AGAINST TARGET [87,111,114,108] (right_eq=%d left_eq=%d)\n",
+                       right_eq_target, left_eq_target);
+        } else if (match > 0) {
+            dr_fprintf(cmp_log_file, "    partial match length = %zu\n", match);
+        }
+
+        dr_flush_file(cmp_log_file); // ensure it's written
+    }
 }
 
 // Clean call executed at runtime
@@ -1139,6 +1178,11 @@ event_exit(void)
 {
     libinject_exit();
 
+  if (cmp_log_file) {
+        dr_fprintf(cmp_log_file, "cmp_log closed\n");
+        dr_close_file(cmp_log_file);
+    }
+
     if(options.debug_mode) {
         if(debug_data.pre_handler_called == 0) {
             dr_fprintf(winafl_data.log, "WARNING: Target function was never called. Incorrect target_offset?\n");
@@ -1428,6 +1472,8 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
         setup_shmem();
     } else {
         winafl_data.afl_area = (unsigned char *)dr_global_alloc(MAP_SIZE);
+        cmp_log_file = dr_open_file("cmp_log.txt", DR_FILE_WRITE_OVERWRITE);
+        dr_fprintf(cmp_log_file, "cmp_log opened\n");
     }
 
     if(options.coverage_kind == COVERAGE_EDGE || options.thread_coverage || options.dr_persist_cache) {
