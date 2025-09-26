@@ -30,6 +30,7 @@
 #include "drx.h"
 #include "drreg.h"
 #include "drwrap.h"
+#include "drutil.h"
 
 #ifdef USE_DRSYMS
 #include "drsyms.h"
@@ -413,9 +414,7 @@ cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
         drutil_insert_get_mem_addr(drcontext, bb, instr, src0, scratch1, scratch2);
         left_val = (uintptr_t)scratch1; // pass EA as integer
     } else if (opnd_is_reg(src0)) {
-        // Read the register value into scratch1
-        dr_insert_read_raw_tls(drcontext, scratch1, opnd_get_reg(src0));
-        left_val = (uintptr_t)scratch1;
+	left_val = (uintptr_t)opnd_get_reg(src0);
     } else if (opnd_is_immed(src0)) {
         left_val = (uintptr_t)opnd_get_immed_int(src0);
     }
@@ -425,9 +424,7 @@ cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
         drutil_insert_get_mem_addr(drcontext, bb, instr, src1, scratch2, scratch1);
         right_val = (uintptr_t)scratch2; // pass EA as integer
     } else if (opnd_is_reg(src1)) {
-        // Read the register value into scratch2
-        dr_insert_read_raw_tls(drcontext, scratch2, opnd_get_reg(src1));
-        right_val = (uintptr_t)scratch2;
+	right_val = (uintptr_t)opnd_get_reg(src1);
     } else if (opnd_is_immed(src1)) {
         right_val = (uintptr_t)opnd_get_immed_int(src1);
     }
@@ -1163,6 +1160,7 @@ event_exit(void)
 
     drx_exit();
     drmgr_exit();
+    drutil_exit();
 }
 
 static void
@@ -1396,6 +1394,7 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
     drx_init();
     drreg_init(&ops);
     drwrap_init();
+    drutil_init();
 
     options_init(id, argc, argv);
 
