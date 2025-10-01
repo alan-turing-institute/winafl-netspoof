@@ -161,6 +161,10 @@ event_thread_exit(void *drcontext);
 
 static HANDLE pipe;
 
+// Shadow stack TLS index used by libinject (Rust). Must be a global (non-static)
+// so the Rust extern symbol `tls_idx` can resolve at link time.
+int tls_idx = -1;
+
 /****************************************************************************
  * Nudges
  */
@@ -1071,6 +1075,16 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
         }
         drmgr_register_thread_init_event(event_thread_init);
         drmgr_register_thread_exit_event(event_thread_exit);
+    }
+
+    // Reserve a TLS field for libinject's shadow stack usage. Even if libinject's
+    // thread init/exit callbacks are not registered here, defining and initializing
+    // this value ensures the Rust code can reference a valid index if used.
+    if (tls_idx == -1) {
+        tls_idx = drmgr_register_tls_field();
+        if (tls_idx == -1) {
+            DR_ASSERT_MSG(false, "error reserving libinject TLS field");
+        }
     }
 
     event_init();
