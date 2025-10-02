@@ -173,7 +173,7 @@ typedef struct _winafl_data_t {
 } winafl_data_t;
 static winafl_data_t winafl_data;
 
-static int winafl_tls_field;
+int winafl_tls_field;
 
 typedef struct _fuzz_target_t {
     reg_t xsp;            /* stack level at entry to the fuzz target */
