@@ -64,6 +64,9 @@
 #define STATUS_HEAP_CORRUPTION 0xC0000374
 #endif
 
+// Export the fuzzing bitmap size for Libinject to use.
+const unsigned int WINAFL_MAP_SIZE = MAP_SIZE;
+
 /* small utility to remember which addresses we wrapped so we don't double-wrap */
 #define MAX_WRAPPED 256
 static app_pc wrapped_addrs[MAX_WRAPPED];
@@ -99,6 +102,16 @@ extern void emit_fuzz_restart(void);
 extern void pre_connect(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void pre_send(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void pre_recv(void *wrapcxt, DR_PARAM_OUT void **user_data);
+extern dr_emit_flags_t cmp_coverage(
+  void *drcontext,
+  void *tag,
+  instrlist_t *bb,
+  instr_t *instr,
+  bool for_trace,
+  bool translating,
+  void *user_data
+);
+
 
 
 static uint verbose;
@@ -339,189 +352,6 @@ static void read_operand(uintptr_t op, unsigned char *buf, size_t n, dr_mcontext
         for (size_t i = 0; i < n && i < sizeof(uint64_t); ++i)
             buf[i] = (reg_val >> (i*8)) & 0xFF;
     }
-}
-
-static void
-cmp_coverage_probe_cmp(app_pc instr_pc, uintptr_t left_operand, uintptr_t right_operand, uintptr_t len)
-{
-    // get thread-local fields (same layout as your other clean-call)
-    void **thread_data = (void **)drmgr_get_tls_field(dr_get_current_drcontext(),
-                                                     winafl_tls_field);
-    if (!thread_data) return;
-
-    unsigned char *afl_area = (unsigned char *)thread_data[1]; // shared bitmap
-    uint32_t prev_loc = (uint32_t)(uintptr_t)thread_data[0];
-
-    // Hash current instruction address for index
-    uint32_t cur_loc = ((uint32_t)((uintptr_t)instr_pc >> 4)) & (MAP_SIZE - 1);
-    uint32_t idx = cur_loc ^ prev_loc;
-    if (idx >= MAP_SIZE) idx &= (MAP_SIZE - 1);
-
-    // Prepare buffers for left and right
-    unsigned char left_buf[128] = {0}, right_buf[128] = {0};
-    size_t max_len = (size_t)len;
-    if (max_len > sizeof(left_buf)) max_len = sizeof(left_buf);
-
-    dr_mcontext_t mc = { sizeof(mc), DR_MC_ALL };
-    dr_get_mcontext(dr_get_current_drcontext(), &mc);
-
-    read_operand(left_operand, left_buf, max_len, &mc);
-    read_operand(right_operand, right_buf, max_len, &mc);
-
-    // Compute leading match bytes
-    size_t match = 0;
-    for (size_t i = 0; i < max_len; ++i) {
-        if (left_buf[i] != right_buf[i]) break;
-        match++;
-    }
-
-    // Update AFL bitmap
-    if (match > 0) {
-        unsigned char val = (unsigned char)(1 + (match & 0xFF));
-        afl_area[idx]++;
-        afl_area[idx] += val;
-    } else {
-        afl_area[idx]++;
-    }
-    thread_data[0] = cur_loc >> 1;
-
-    // Logging
-    if (cmp_log_file) {
-        dr_fprintf(cmp_log_file,
-                   "CMP @%p left=%p right=%p len=%zu match=%zu left_first4=%02x%02x%02x%02x right_first4=%02x%02x%02x%02x\n",
-                   instr_pc, (void *)left_operand, (void *)right_operand, len, match,
-                   left_buf[0], left_buf[1], left_buf[2], left_buf[3],
-                   right_buf[0], right_buf[1], right_buf[2], right_buf[3]);
-
-        bool right_eq_target = true, left_eq_target = true;
-        for (int i = 0; i < 4; ++i) {
-            if (right_buf[i] != target_bytes[i]) right_eq_target = false;
-            if (left_buf[i] != target_bytes[i]) left_eq_target = false;
-        }
-
-        if (right_eq_target || left_eq_target) {
-            dr_fprintf(cmp_log_file, "    >> COMPARES AGAINST TARGET [87,111,114,108] (right_eq=%d left_eq=%d)\n",
-                       right_eq_target, left_eq_target);
-        } else if (match > 0) {
-            dr_fprintf(cmp_log_file, "    partial match length = %zu\n", match);
-        }
-
-        dr_flush_file(cmp_log_file);
-    }
-}
-
-static void
-cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
-{
-    int opcode = instr_get_opcode(instr);
-    if (opcode != OP_cmp && opcode != OP_test)
-        return;
-
-    if (instr_num_srcs(instr) < 2)
-        return;
-
-    opnd_t src0 = instr_get_src(instr, 0);
-    opnd_t src1 = instr_get_src(instr, 1);
-
-    int size = opnd_size_in_bytes(opnd_get_size(src0));
-    if (size <= 0) size = 1;
-
-#ifdef X86_64
-    reg_id_t scratch1 = DR_REG_R10;
-    reg_id_t scratch2 = DR_REG_R11;
-#else
-    reg_id_t scratch1 = DR_REG_EAX;
-    reg_id_t scratch2 = DR_REG_ECX;
-#endif
-
-    // Save scratch registers
-    dr_save_reg(drcontext, bb, instr, scratch1, SPILL_SLOT_1);
-    dr_save_reg(drcontext, bb, instr, scratch2, SPILL_SLOT_2);
-
-    uintptr_t left_val = 0;
-    uintptr_t right_val = 0;
-
-    // Compute left operand value or address
-    if (opnd_is_memory_reference(src0)) {
-        drutil_insert_get_mem_addr(drcontext, bb, instr, src0, scratch1, scratch2);
-        left_val = (uintptr_t)scratch1; // pass EA as integer
-    } else if (opnd_is_reg(src0)) {
-	left_val = (uintptr_t)opnd_get_reg(src0);
-    } else if (opnd_is_immed(src0)) {
-        left_val = (uintptr_t)opnd_get_immed_int(src0);
-    }
-
-    // Compute right operand value or address
-    if (opnd_is_memory_reference(src1)) {
-        drutil_insert_get_mem_addr(drcontext, bb, instr, src1, scratch2, scratch1);
-        right_val = (uintptr_t)scratch2; // pass EA as integer
-    } else if (opnd_is_reg(src1)) {
-	right_val = (uintptr_t)opnd_get_reg(src1);
-    } else if (opnd_is_immed(src1)) {
-        right_val = (uintptr_t)opnd_get_immed_int(src1);
-    }
-
-    // Insert clean call with integer/pointer arguments
-    dr_insert_clean_call(drcontext, bb, instr,
-                         (void *)cmp_coverage_probe_cmp,
-                         false, 4,
-                         OPND_CREATE_INTPTR(instr_get_app_pc(instr)),
-                         OPND_CREATE_INTPTR(left_val),
-                         OPND_CREATE_INTPTR(right_val),
-                         OPND_CREATE_INT32(size));
-
-    // Restore scratch registers
-    dr_restore_reg(drcontext, bb, instr, scratch2, SPILL_SLOT_2);
-    dr_restore_reg(drcontext, bb, instr, scratch1, SPILL_SLOT_1);
-}
-
-
-// static void
-// cmp_instrument_instruction(void *drcontext, instrlist_t *bb, instr_t *instr)
-// {
-//     // Only instrument compare instructions
-//     int opcode = instr_get_opcode(instr);
-//     if (opcode == OP_cmp || opcode == OP_test || opcode == OP_cmps) {
-//
-//         // Insert a clean call to handle AFL bitmap update
-//         dr_insert_clean_call(drcontext, bb, instr,
-//                              (void *)cmp_coverage_probe, false, 1,
-//                              OPND_CREATE_INTPTR(instr_get_app_pc(instr)));
-//     }
-// }
-
-// Called from your combined BB callback
-static dr_emit_flags_t
-cmp_coverage(void *drcontext, void *tag, instrlist_t *bb,
-             instr_t *instr, bool for_trace, bool translating,
-             void *user_data)
-{
-
-    // Lookup module for this instruction
-    module_entry_t *mod_entry = module_table_lookup(winafl_data.cache,
-                                                    NUM_THREAD_MODULE_CACHE,
-                                                    module_table,
-                                                    dr_fragment_app_pc(tag));
-    if (!mod_entry || !mod_entry->data) return DR_EMIT_DEFAULT;
-
-    const char *module_name = dr_module_preferred_name(mod_entry->data);
-
-    // Only instrument target modules
-    target_module_t *target_modules = options.target_modules;
-    bool should_instrument = false;
-    while (target_modules) {
-        if (_stricmp(module_name, target_modules->module_name) == 0) {
-            should_instrument = true;
-            break;
-        }
-        target_modules = target_modules->next;
-    }
-    if (!should_instrument) return DR_EMIT_DEFAULT;
-
-    // Instrument the current instruction if it is a compare
-    cmp_instrument_instruction(drcontext, bb, instr);
-
-    return DR_EMIT_DEFAULT | DR_EMIT_PERSISTABLE;
 }
 
 static dr_emit_flags_t
