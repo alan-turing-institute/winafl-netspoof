@@ -23,6 +23,8 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #define MAP_SIZE 65536
+#define EDGE_MAP_SIZE 32768
+#define CMP_MAP_SIZE 32768
 #define MAX_CMP_LEN 32
 
 #include "dr_api.h"
@@ -65,7 +67,8 @@
 #endif
 
 // Export the fuzzing bitmap size for Libinject to use.
-const unsigned int WINAFL_MAP_SIZE = MAP_SIZE;
+const unsigned int WINAFL_EDGE_MAP_SIZE = EDGE_MAP_SIZE;
+const unsigned int WINAFL_CMP_MAP_SIZE = CMP_MAP_SIZE;
 
 /* small utility to remember which addresses we wrapped so we don't double-wrap */
 #define MAX_WRAPPED 256
@@ -497,7 +500,7 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     if(!should_instrument) return DR_EMIT_DEFAULT | DR_EMIT_PERSISTABLE;
 
     offset = (uint)(start_pc - mod_entry->data->start);
-    offset &= MAP_SIZE - 1;
+    offset &= EDGE_MAP_SIZE - 1;
 
     drreg_reserve_aflags(drcontext, bb, inst);
     drreg_reserve_register(drcontext, bb, inst, NULL, &reg);
@@ -545,7 +548,7 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     instrlist_meta_preinsert(bb, inst, new_instr);
 
     //store the new value
-    offset = (offset >> 1)&(MAP_SIZE - 1);
+    offset = (offset >> 1)&(EDGE_MAP_SIZE - 1);
     opnd1 = OPND_CREATE_MEMPTR(reg3, 0);
     opnd2 = OPND_CREATE_INT32(offset);
     new_instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
