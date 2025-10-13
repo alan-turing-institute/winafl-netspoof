@@ -746,13 +746,13 @@ pre_memcmp_hook(void *wrapcxt, INOUT void **user_data)
     if (options.debug_mode) {
       if (mod_entry && mod_entry->data) {
           dr_fprintf(STDERR,
-                     "[DBG:%s] ret=%p mod=%s mod_start=%p offset=%u prev=%u base_idx=%u\n comparing first %u bytes:\n ",
-                     tag, ret_addr, dr_module_preferred_name(mod_entry->data),
-                     mod_entry->data->start, offset, prev, base, idx, oldv, newv);
+                     "[DBG] ret=%p mod=%s mod_start=%p offset=%u prev=%u base_idx=%u\n comparing first %u bytes:\n ",
+                     ret_addr, dr_module_preferred_name(mod_entry->data),
+                     mod_entry->data->start, offset, prev, base, MAX_CMP_LEN);
       } else {
           dr_fprintf(STDERR,
-                     "[DBG:%s] ret=%p mod=<none> offset=%u prev=%u base_idx=%u \n comparing first %u bytes: \n",
-                     tag, ret_addr, offset, prev, base, idx, oldv, newv);
+                     "[DBG] ret=%p mod=<none> offset=%u prev=%u base_idx=%u \n comparing first %u bytes: \n",
+                     ret_addr, offset, prev, base, MAX_CMP_LEN);
       }
       dr_fprintf(STDERR, "a: ");
       for (size_t i = 0; i < L; ++i) {
