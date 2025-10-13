@@ -688,23 +688,6 @@ post_fuzz_handler(void *wrapcxt, void *user_data)
 	drwrap_redirect_execution(wrapcxt);
 }
 
-static void debug_map_hit(const char *tag, app_pc ret_addr, module_entry_t *mod_entry,
-                          uint32_t prev, uint32_t offset, uint32_t base, uint32_t idx,
-                          uint8_t oldv, uint8_t newv)
-{
-    if (!options.debug_mode) return;
-    if (mod_entry && mod_entry->data) {
-        dr_fprintf(STDERR,
-                   "[DBG:%s] ret=%p mod=%s mod_start=%p offset=%u prev=%u base=%u idx=%u old=%u new=%u\n",
-                   tag, ret_addr, dr_module_preferred_name(mod_entry->data),
-                   mod_entry->data->start, offset, prev, base, idx, oldv, newv);
-    } else {
-        dr_fprintf(STDERR,
-                   "[DBG:%s] ret=%p mod=<none> offset=%u prev=%u base=%u idx=%u old=%u new=%u\n",
-                   tag, ret_addr, offset, prev, base, idx, oldv, newv);
-    }
-}
-
 static void
 pre_memcmp_hook(void *wrapcxt, INOUT void **user_data)
 {
@@ -760,6 +743,28 @@ pre_memcmp_hook(void *wrapcxt, INOUT void **user_data)
     const uint8_t *pa = (const uint8_t *)a;
     const uint8_t *pb = (const uint8_t *)b;
 
+    if (options.debug_mode) {
+      if (mod_entry && mod_entry->data) {
+          dr_fprintf(STDERR,
+                     "[DBG:%s] ret=%p mod=%s mod_start=%p offset=%u prev=%u base_idx=%u\n comparing first %u bytes:\n ",
+                     tag, ret_addr, dr_module_preferred_name(mod_entry->data),
+                     mod_entry->data->start, offset, prev, base, idx, oldv, newv);
+      } else {
+          dr_fprintf(STDERR,
+                     "[DBG:%s] ret=%p mod=<none> offset=%u prev=%u base_idx=%u \n comparing first %u bytes: \n",
+                     tag, ret_addr, offset, prev, base, idx, oldv, newv);
+      }
+      dr_fprintf(STDERR, "a: ");
+      for (size_t i = 0; i < L; ++i) {
+          dr_fprintf(STDERR, "%02x ", pa[i]);
+      }
+      dr_fprintf(STDERR, "\nb: ");
+      for (size_t i = 0; i < L; ++i) {
+          dr_fprintf(STDERR, "%02x ", pb[i]);
+      }
+      dr_fprintf(STDERR, "\n");
+    };
+
     for (size_t i = 0; i < L; ++i) {
         if (pa[i] != pb[i]) break;
         uint32_t idx = (base + (uint32_t)i) & mask;
@@ -767,8 +772,6 @@ pre_memcmp_hook(void *wrapcxt, INOUT void **user_data)
         volatile uint8_t *p = (volatile uint8_t *)&afl_area[idx];
         uint8_t oldv = *p;
         *p = (uint8_t)(oldv + 1);
-        uint8_t newv = *p;
-        debug_map_hit("memcmp", ret_addr, mod_entry, prev, offset, base, idx, oldv, newv);
     }
 }
 
@@ -1226,7 +1229,7 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
 
     libinject_init(id);
 
-    dr_fprintf(STDERR, "[stderr] running dr_client_main");
+    dr_fprintf(STDERR, "[stderr] running dr_client_main\n");
     dr_fprintf(winafl_data.log, "[logfile] running dr_client_main");
 
     drmgr_init();
