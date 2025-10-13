@@ -23,7 +23,9 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #define MAP_SIZE 65536
-#define EDGE_MAP_SIZE 32768
+// The coverage partition, for basic-block or edge coverage.
+#define COV_MAP_SIZE 32768
+// The compare partition, for coverage on CMP and TEST instructions.
 #define CMP_MAP_SIZE 32768
 #define MAX_CMP_LEN 32
 
@@ -67,7 +69,7 @@
 #endif
 
 // Export the fuzzing bitmap size for Libinject to use.
-const unsigned int WINAFL_EDGE_MAP_SIZE = EDGE_MAP_SIZE;
+const unsigned int WINAFL_COV_MAP_SIZE = COV_MAP_SIZE;
 const unsigned int WINAFL_CMP_MAP_SIZE = CMP_MAP_SIZE;
 
 /* small utility to remember which addresses we wrapped so we don't double-wrap */
@@ -324,39 +326,6 @@ static void event_thread_exit(void *drcontext)
   dr_thread_free(drcontext, data, 2 * sizeof(void *));
 }
 
-static const unsigned char target_bytes[4] = {87, 111, 114, 108};
-
-// Helper function: read a memory or register operand into buf
-static void read_operand(uintptr_t op, unsigned char *buf, size_t n, dr_mcontext_t *mc)
-{
-    if (op > 0x1000) { // memory address
-        dr_safe_read((const byte *)op, n, buf, NULL);
-    } else { // register ID
-        uint64_t reg_val = 0;
-        switch ((reg_id_t)op) {
-            case DR_REG_RAX: reg_val = mc->rax; break;
-            case DR_REG_RCX: reg_val = mc->rcx; break;
-            case DR_REG_RDX: reg_val = mc->rdx; break;
-            case DR_REG_RBX: reg_val = mc->rbx; break;
-            case DR_REG_RSP: reg_val = mc->rsp; break;
-            case DR_REG_RBP: reg_val = mc->rbp; break;
-            case DR_REG_RSI: reg_val = mc->rsi; break;
-            case DR_REG_RDI: reg_val = mc->rdi; break;
-            case DR_REG_R8:  reg_val = mc->r8;  break;
-            case DR_REG_R9:  reg_val = mc->r9;  break;
-            case DR_REG_R10: reg_val = mc->r10; break;
-            case DR_REG_R11: reg_val = mc->r11; break;
-            case DR_REG_R12: reg_val = mc->r12; break;
-            case DR_REG_R13: reg_val = mc->r13; break;
-            case DR_REG_R14: reg_val = mc->r14; break;
-            case DR_REG_R15: reg_val = mc->r15; break;
-            default: reg_val = 0; break;
-        }
-        for (size_t i = 0; i < n && i < sizeof(uint64_t); ++i)
-            buf[i] = (reg_val >> (i*8)) & 0xFF;
-    }
-}
-
 static dr_emit_flags_t
 instrument_bb_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
                       bool for_trace, bool translating, void *user_data)
@@ -402,7 +371,7 @@ instrument_bb_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *ins
     if(!should_instrument) return DR_EMIT_DEFAULT | DR_EMIT_PERSISTABLE;
 
     offset = (uint)(start_pc - mod_entry->data->start);
-    offset &= MAP_SIZE - 1;
+    offset &= COV_MAP_SIZE - 1;
 
     afl_map = winafl_data.afl_area;
 
@@ -442,15 +411,6 @@ instrument_bb_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *ins
     drreg_unreserve_aflags(drcontext, bb, inst);
 
     return ret;
-}
-
-static dr_emit_flags_t
-instrument_bb_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
-                      bool for_trace, bool translating, void *user_data)
-{
-  dr_emit_flags_t f1 = instrument_bb_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
-  dr_emit_flags_t f2 = cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
-  return f1 | f2;
 }
 
 static dr_emit_flags_t
@@ -500,7 +460,7 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     if(!should_instrument) return DR_EMIT_DEFAULT | DR_EMIT_PERSISTABLE;
 
     offset = (uint)(start_pc - mod_entry->data->start);
-    offset &= EDGE_MAP_SIZE - 1;
+    offset &= COV_MAP_SIZE - 1;
 
     drreg_reserve_aflags(drcontext, bb, inst);
     drreg_reserve_register(drcontext, bb, inst, NULL, &reg);
@@ -548,7 +508,7 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     instrlist_meta_preinsert(bb, inst, new_instr);
 
     //store the new value
-    offset = (offset >> 1)&(EDGE_MAP_SIZE - 1);
+    offset = (offset >> 1)&(COV_MAP_SIZE - 1);
     opnd1 = OPND_CREATE_MEMPTR(reg3, 0);
     opnd2 = OPND_CREATE_INT32(offset);
     new_instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
@@ -560,6 +520,15 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     drreg_unreserve_aflags(drcontext, bb, inst);
 
     return ret;
+}
+
+static dr_emit_flags_t
+instrument_bb_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
+                      bool for_trace, bool translating, void *user_data)
+{
+  dr_emit_flags_t f1 = instrument_bb_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  dr_emit_flags_t f2 = cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  return f1 | f2;
 }
 
 static dr_emit_flags_t
@@ -776,14 +745,14 @@ pre_memcmp_hook(void *wrapcxt, INOUT void **user_data)
     if (mod_entry != NULL && mod_entry->data != NULL) {
         uintptr_t mod_start = (uintptr_t)mod_entry->data->start;
         uintptr_t diff = (uintptr_t)ret_addr - mod_start;
-        offset = (uint32_t)(diff & (MAP_SIZE - 1));
+        offset = (uint32_t)(diff & (COV_MAP_SIZE - 1));
     } else {
         /* fallback deterministic mix */
         uintptr_t r = (uintptr_t)ret_addr;
-        offset = (uint32_t)(((r >> 4) ^ (r << 8)) & (MAP_SIZE - 1));
+        offset = (uint32_t)(((r >> 4) ^ (r << 8)) & (COV_MAP_SIZE - 1));
     }
 
-    uint32_t mask = MAP_SIZE - 1;
+    uint32_t mask = COV_MAP_SIZE - 1;
     uint32_t base = (prev ^ offset) & mask;
 
     /* clamp length */
