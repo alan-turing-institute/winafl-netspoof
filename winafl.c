@@ -76,7 +76,6 @@ const unsigned int WINAFL_CMP_MAP_SIZE = CMP_MAP_SIZE;
 #define MAX_WRAPPED 256
 static app_pc wrapped_addrs[MAX_WRAPPED];
 static int wrapped_count = 0;
-static file_t cmp_log_file = NULL;
 
 static bool already_wrapped(app_pc addr) {
     for (int i = 0; i < wrapped_count; ++i) {
@@ -976,11 +975,6 @@ event_exit(void)
 {
     libinject_exit();
 
-  if (cmp_log_file) {
-        dr_fprintf(cmp_log_file, "cmp_log closed\n");
-        dr_close_file(cmp_log_file);
-    }
-
     if(options.debug_mode) {
         if(debug_data.pre_handler_called == 0) {
             dr_fprintf(winafl_data.log, "WARNING: Target function was never called. Incorrect target_offset?\n");
@@ -1270,8 +1264,6 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
         setup_shmem();
     } else {
         winafl_data.afl_area = (unsigned char *)dr_global_alloc(MAP_SIZE);
-        cmp_log_file = dr_open_file("cmp_log.txt", DR_FILE_WRITE_OVERWRITE);
-        dr_fprintf(cmp_log_file, "cmp_log opened\n");
     }
 
     if(options.coverage_kind == COVERAGE_EDGE || options.thread_coverage || options.dr_persist_cache) {
