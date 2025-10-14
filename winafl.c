@@ -106,6 +106,7 @@ extern void emit_fuzz_restart(void);
 extern void pre_connect(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void pre_send(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void pre_recv(void *wrapcxt, DR_PARAM_OUT void **user_data);
+extern void pre_memcmp(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern dr_emit_flags_t cmp_coverage(
   void *drcontext,
   void *tag,
@@ -688,93 +689,6 @@ post_fuzz_handler(void *wrapcxt, void *user_data)
 }
 
 static void
-pre_memcmp_hook(void *wrapcxt, INOUT void **user_data)
-{
-    void *drcontext = drwrap_get_drcontext(wrapcxt);
-    if (!drcontext) return;
-
-    /* memcmp(a,b,n) */
-    const void *a = (const void *)drwrap_get_arg(wrapcxt, 0);
-    const void *b = (const void *)drwrap_get_arg(wrapcxt, 1);
-    size_t n = (size_t)(uintptr_t)drwrap_get_arg(wrapcxt, 2);
-    if (n == 0 || a == NULL || b == NULL) return;
-
-    /* TLS layout: thread_data[0] = prev, thread_data[1] = afl_area */
-    void **thread_data = (void **)drmgr_get_tls_field(drcontext, winafl_tls_field);
-    if (thread_data == NULL) return;
-
-    uint64_t raw_prev_ptr = (uint64_t)(uintptr_t)thread_data[0]; /* pointer-sized storage */
-    uint8_t *afl_area = (uint8_t *)thread_data[1];
-    if (afl_area == NULL) return;
-
-    /* Prev is stored as a 32-bit value in the TLS slot by the edge instrumentation.
-       Truncate/fit it into 32 bits safely. */
-    uint32_t prev = (uint32_t)raw_prev_ptr;
-
-    /* get return address (call-site). preferred DR API */
-    app_pc ret_addr = (app_pc)drwrap_get_retaddr(wrapcxt);
-    if (ret_addr == NULL) {
-#if defined(_MSC_VER) || defined(__clang__) || defined(__GNUC__)
-        ret_addr = (app_pc)_ReturnAddress();
-#else
-        return; /* cannot get return address */
-#endif
-    }
-
-    /* Determine offset consistent with the edge instrumentation */
-    uint32_t offset;
-    module_entry_t *mod_entry = module_table_lookup(winafl_data.cache, NUM_THREAD_MODULE_CACHE, module_table, ret_addr);
-    if (mod_entry != NULL && mod_entry->data != NULL) {
-        uintptr_t mod_start = (uintptr_t)mod_entry->data->start;
-        uintptr_t diff = (uintptr_t)ret_addr - mod_start;
-        offset = (uint32_t)(diff & (COV_MAP_SIZE - 1));
-    } else {
-        /* fallback deterministic mix */
-        uintptr_t r = (uintptr_t)ret_addr;
-        offset = (uint32_t)(((r >> 4) ^ (r << 8)) & (COV_MAP_SIZE - 1));
-    }
-
-    uint32_t mask = COV_MAP_SIZE - 1;
-    uint32_t base = (prev ^ offset) & mask;
-
-    /* clamp length */
-    size_t L = n < MAX_CMP_LEN ? n : MAX_CMP_LEN;
-    const uint8_t *pa = (const uint8_t *)a;
-    const uint8_t *pb = (const uint8_t *)b;
-
-    if (options.debug_mode) {
-      if (mod_entry && mod_entry->data) {
-          dr_fprintf(STDERR,
-                     "[DBG] ret=%p mod=%s mod_start=%p offset=%u prev=%u base_idx=%u\n comparing first %u bytes:\n ",
-                     ret_addr, dr_module_preferred_name(mod_entry->data),
-                     mod_entry->data->start, offset, prev, base, MAX_CMP_LEN);
-      } else {
-          dr_fprintf(STDERR,
-                     "[DBG] ret=%p mod=<none> offset=%u prev=%u base_idx=%u \n comparing first %u bytes: \n",
-                     ret_addr, offset, prev, base, MAX_CMP_LEN);
-      }
-      dr_fprintf(STDERR, "a: ");
-      for (size_t i = 0; i < L; ++i) {
-          dr_fprintf(STDERR, "%02x ", pa[i]);
-      }
-      dr_fprintf(STDERR, "\nb: ");
-      for (size_t i = 0; i < L; ++i) {
-          dr_fprintf(STDERR, "%02x ", pb[i]);
-      }
-      dr_fprintf(STDERR, "\n");
-    };
-
-    for (size_t i = 0; i < L; ++i) {
-        if (pa[i] != pb[i]) break;
-        uint32_t idx = (base + (uint32_t)i) & mask;
-        /* volatile RMW; capture old/new for debug */
-        volatile uint8_t *p = (volatile uint8_t *)&afl_area[idx];
-        uint8_t oldv = *p;
-        *p = (uint8_t)(oldv + 1);
-    }
-}
-
-static void
 createfilew_interceptor(void *wrapcxt, INOUT void **user_data)
 {
     wchar_t *filenamew = (wchar_t *)drwrap_get_arg(wrapcxt, 0);
@@ -864,12 +778,7 @@ wrap_compare_symbols_in_module(HMODULE module_handle, const char *name_prefix)
             continue;
         }
 
-        /* use drwrap_wrap_ex if you want flags; here DRWRAP_FLAGS_NONE is safe */
-        bool ok = drwrap_wrap_ex(fn, pre_memcmp_hook, NULL, NULL, DRWRAP_FLAGS_NONE);
-        if (!ok) {
-            /* fallback to simpler API */
-            ok = drwrap_wrap(fn, pre_memcmp_hook, NULL);
-        }
+        bool ok = drwrap_wrap(fn, pre_memcmp, NULL);
         dr_fprintf(STDERR, "[DBG] try wrap %s!%s -> %s (addr=%p)\n",
                    name_prefix, *sym, ok ? "ok" : "fail", fn);
         if (ok) remember_wrapped(fn);
