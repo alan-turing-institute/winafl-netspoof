@@ -72,30 +72,6 @@
 const unsigned int WINAFL_COV_MAP_SIZE = COV_MAP_SIZE;
 const unsigned int WINAFL_CMP_MAP_SIZE = CMP_MAP_SIZE;
 
-/* small utility to remember which addresses we wrapped so we don't double-wrap */
-#define MAX_WRAPPED 256
-static app_pc wrapped_addrs[MAX_WRAPPED];
-static int wrapped_count = 0;
-
-static bool already_wrapped(app_pc addr) {
-    for (int i = 0; i < wrapped_count; ++i) {
-        if (wrapped_addrs[i] == addr) return true;
-    }
-    return false;
-}
-static void remember_wrapped(app_pc addr) {
-    if (wrapped_count < MAX_WRAPPED) wrapped_addrs[wrapped_count++] = addr;
-}
-
-/* list of candidate compare symbols to try wrapping */
-static const char *compare_symbols[] = {
-    "memcmp", "_memcmp", "memcmp_s",     /* CRT variants */
-    "strcmp", "_strcmp", "strncmp", "_strncmp",
-    "_stricmp", "_strnicmp", "wmemcmp",
-    "RtlCompareMemory", "RtlEqualMemory", /* ntdll/kernel helpers */
-    NULL
-};
-
 // Functions exposed by libinject.
 extern void libinject_init(unsigned int id);
 extern void libinject_exit(void);
@@ -106,7 +82,7 @@ extern void emit_fuzz_restart(void);
 extern void pre_connect(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void pre_send(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void pre_recv(void *wrapcxt, DR_PARAM_OUT void **user_data);
-extern void pre_memcmp(void *wrapcxt, DR_PARAM_OUT void **user_data);
+extern void wrap_compare_symbols(HMODULE module_handle, const char *name_prefix);
 extern dr_emit_flags_t cmp_coverage(
   void *drcontext,
   void *tag,
@@ -762,30 +738,6 @@ unhandledexceptionfilter_interceptor_pre(void *wrapcxt, INOUT void **user_data)
 }
 
 static void
-wrap_compare_symbols_in_module(HMODULE module_handle, const char *name_prefix)
-{
-    if (module_handle == NULL) return;
-
-    for (const char **sym = compare_symbols; *sym != NULL; ++sym) {
-        FARPROC fp = GetProcAddress(module_handle, *sym);
-        if (fp == NULL) continue;
-
-        app_pc fn = (app_pc)fp;
-        if (already_wrapped(fn)) {
-            if (options.debug_mode)
-                dr_fprintf(STDERR, "[DBG] skip already-wrapped %s!%s @%p\n",
-                           name_prefix, *sym, fn);
-            continue;
-        }
-
-        bool ok = drwrap_wrap(fn, pre_memcmp, NULL);
-        dr_fprintf(STDERR, "[DBG] try wrap %s!%s -> %s (addr=%p)\n",
-                   name_prefix, *sym, ok ? "ok" : "fail", fn);
-        if (ok) remember_wrapped(fn);
-    }
-}
-
-static void
 event_module_unload(void *drcontext, const module_data_t *info)
 {
     module_table_unload(module_table, info);
@@ -818,7 +770,7 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
         _stricmp(module_name, "ntdll.dll") == 0) {
 
         HMODULE h = (HMODULE)info->handle;
-        wrap_compare_symbols_in_module(h, module_name);
+        wrap_compare_symbols(h, module_name);
     }
 
     if (_stricmp(module_name, "WS2_32.dll") == 0) {
@@ -874,7 +826,7 @@ static void wrap_preloaded_crts(void)
         HMODULE h = GetModuleHandleA(*m);
         if (h != NULL) {
             dr_fprintf(STDERR, "[DBG] found preloaded module %s handle=%p\n", *m, h);
-            wrap_compare_symbols_in_module(h, *m);
+            wrap_compare_symbols(h, *m);
         }
     }
 }
