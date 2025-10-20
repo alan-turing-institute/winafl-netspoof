@@ -215,11 +215,19 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
   # Set default ExternalProject root directory
   set_directory_properties(PROPERTIES EP_PREFIX ${CMAKE_BINARY_DIR}/Rust)
 
+  if(CMAKE_GENERATOR_PLATFORM STREQUAL "Win32")
+    set(RUST_TARGET "i686-pc-windows-msvc")
+  elseif(CMAKE_GENERATOR_PLATFORM STREQUAL "x64")
+    set(RUST_TARGET "x86_64-pc-windows-msvc")
+  else()
+    message(FATAL_ERROR "Unsupported platform: ${CMAKE_GENERATOR_PLATFORM}")
+  endif()
+
   ExternalProject_Add(
 	  libinject
 	  DOWNLOAD_COMMAND ""
 	  CONFIGURE_COMMAND ""
-	  BUILD_COMMAND cargo build COMMAND cargo build --release
+	  BUILD_COMMAND cargo build COMMAND cargo build --release --target ${RUST_TARGET}
 	  BINARY_DIR "${CMAKE_SOURCE_DIR}/../libinject"
 	  INSTALL_COMMAND ""
 	  LOG_BUILD ON
@@ -233,7 +241,7 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
 	  mutator
 	  DOWNLOAD_COMMAND ""
 	  CONFIGURE_COMMAND ""
-	  BUILD_COMMAND cargo build COMMAND cargo build --release
+	  BUILD_COMMAND cargo build COMMAND cargo build --release --target ${RUST_TARGET}
 	  BINARY_DIR "${CMAKE_SOURCE_DIR}/mutator"
 	  INSTALL_COMMAND ""
 	  LOG_BUILD ON
@@ -258,8 +266,8 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
 
   # Specify Example's link libraries
   target_link_libraries(winafl
-	debug "${CMAKE_SOURCE_DIR}/../target/debug/libinject.lib"
-	optimized "${CMAKE_SOURCE_DIR}/../target/release/libinject.lib"
+	debug "${CMAKE_SOURCE_DIR}/../target/${RUST_TARGET}/debug/libinject.lib"
+	optimized "${CMAKE_SOURCE_DIR}/../target/${RUST_TARGET}/release/libinject.lib"
 	ws2_32 userenv advapi32 ntdll)
 
   set_target_properties(winafl PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED ON)
