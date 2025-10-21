@@ -227,7 +227,7 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
 	  libinject
 	  DOWNLOAD_COMMAND ""
 	  CONFIGURE_COMMAND ""
-	  BUILD_COMMAND cargo build COMMAND cargo build --release --target ${RUST_TARGET}
+	  BUILD_COMMAND cargo build COMMAND cargo build $<$<CONFIG:Release>:--release> --target ${RUST_TARGET}
 	  BINARY_DIR "${CMAKE_SOURCE_DIR}/../libinject"
 	  INSTALL_COMMAND ""
 	  LOG_BUILD ON
