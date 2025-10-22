@@ -249,7 +249,7 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
 	  USES_TERMINAL_BUILD ON
 	)
 
-  set(MUTATOR_RELEASE_DLL "${CMAKE_SOURCE_DIR}/mutator/target/release/mutator.dll")
+	set(MUTATOR_RELEASE_DLL "${CMAKE_SOURCE_DIR}/mutator/target/${RUST_TARGET}/release/mutator.dll")
 
   # Copy mutator.dll after building
   ExternalProject_Add_Step(mutator copy_dll
