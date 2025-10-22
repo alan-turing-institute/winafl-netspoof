@@ -23,12 +23,18 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #define MAP_SIZE 65536
+// The coverage partition, for basic-block or edge coverage.
+#define COV_MAP_SIZE 32768
+// The compare partition, for coverage on CMP and TEST instructions.
+#define CMP_MAP_SIZE 32768
+#define MAX_CMP_LEN 32
 
 #include "dr_api.h"
 #include "drmgr.h"
 #include "drx.h"
 #include "drreg.h"
 #include "drwrap.h"
+#include "drutil.h"
 
 #ifdef USE_DRSYMS
 #include "drsyms.h"
@@ -62,6 +68,10 @@
 #define STATUS_HEAP_CORRUPTION 0xC0000374
 #endif
 
+// Export the fuzzing bitmap size for Libinject to use.
+const unsigned int WINAFL_COV_MAP_SIZE = COV_MAP_SIZE;
+const unsigned int WINAFL_CMP_MAP_SIZE = CMP_MAP_SIZE;
+
 // Functions exposed by libinject.
 extern void libinject_init(unsigned int id);
 extern void libinject_exit(void);
@@ -72,6 +82,17 @@ extern void emit_fuzz_restart(void);
 extern void pre_connect(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void pre_send(void *wrapcxt, DR_PARAM_OUT void **user_data);
 extern void pre_recv(void *wrapcxt, DR_PARAM_OUT void **user_data);
+extern void wrap_compare_symbols(HMODULE module_handle, const char *name_prefix);
+extern dr_emit_flags_t cmp_coverage(
+  void *drcontext,
+  void *tag,
+  instrlist_t *bb,
+  instr_t *instr,
+  bool for_trace,
+  bool translating,
+  void *user_data
+);
+
 
 
 static uint verbose;
@@ -133,7 +154,7 @@ typedef struct _winafl_data_t {
 } winafl_data_t;
 static winafl_data_t winafl_data;
 
-static int winafl_tls_field;
+int winafl_tls_field;
 
 typedef struct _fuzz_target_t {
     reg_t xsp;            /* stack level at entry to the fuzz target */
@@ -330,7 +351,7 @@ instrument_bb_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *ins
     if(!should_instrument) return DR_EMIT_DEFAULT | DR_EMIT_PERSISTABLE;
 
     offset = (uint)(start_pc - mod_entry->data->start);
-    offset &= MAP_SIZE - 1;
+    offset &= COV_MAP_SIZE - 1;
 
     afl_map = winafl_data.afl_area;
 
@@ -419,7 +440,7 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     if(!should_instrument) return DR_EMIT_DEFAULT | DR_EMIT_PERSISTABLE;
 
     offset = (uint)(start_pc - mod_entry->data->start);
-    offset &= MAP_SIZE - 1;
+    offset &= COV_MAP_SIZE - 1;
 
     drreg_reserve_aflags(drcontext, bb, inst);
     drreg_reserve_register(drcontext, bb, inst, NULL, &reg);
@@ -467,7 +488,7 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     instrlist_meta_preinsert(bb, inst, new_instr);
 
     //store the new value
-    offset = (offset >> 1)&(MAP_SIZE - 1);
+    offset = (offset >> 1)&(COV_MAP_SIZE - 1);
     opnd1 = OPND_CREATE_MEMPTR(reg3, 0);
     opnd2 = OPND_CREATE_INT32(offset);
     new_instr = INSTR_CREATE_mov_st(drcontext, opnd1, opnd2);
@@ -479,6 +500,24 @@ instrument_edge_coverage(void *drcontext, void *tag, instrlist_t *bb, instr_t *i
     drreg_unreserve_aflags(drcontext, bb, inst);
 
     return ret;
+}
+
+static dr_emit_flags_t
+instrument_bb_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
+                      bool for_trace, bool translating, void *user_data)
+{
+  dr_emit_flags_t f1 = instrument_bb_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  dr_emit_flags_t f2 = cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  return f1 | f2;
+}
+
+static dr_emit_flags_t
+instrument_edge_coverage_combined(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst,
+                      bool for_trace, bool translating, void *user_data)
+{
+  dr_emit_flags_t f1 = instrument_edge_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  dr_emit_flags_t f2 = cmp_coverage(drcontext, tag, bb, inst, for_trace, translating, user_data);
+  return f1 | f2;
 }
 
 static void
@@ -729,6 +768,14 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
         dr_fprintf(STDERR, "did the wrap succeed?  %s\n", result ? "true" : "false");
     }
 
+    if (_stricmp(module_name, "msvcrt.dll") == 0 ||
+        _stricmp(module_name, "ucrtbase.dll") == 0 ||
+        _stricmp(module_name, "vcruntime140.dll") == 0 ||
+        _stricmp(module_name, "ntdll.dll") == 0) {
+
+        HMODULE h = (HMODULE)info->handle;
+        wrap_compare_symbols(h, module_name);
+    }
 
     if (_stricmp(module_name, "WS2_32.dll") == 0) {
 
@@ -776,6 +823,18 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
     module_table_load(module_table, info);
 }
 
+static void wrap_preloaded_crts(void)
+{
+    const char *candidates[] = { "ucrtbase.dll", "msvcrt.dll", "vcruntime140.dll", "vcruntime.dll", "ntdll.dll", NULL };
+    for (const char **m = candidates; *m != NULL; ++m) {
+        HMODULE h = GetModuleHandleA(*m);
+        if (h != NULL) {
+            dr_fprintf(STDERR, "[DBG] found preloaded module %s handle=%p\n", *m, h);
+            wrap_compare_symbols(h, *m);
+        }
+    }
+}
+
 static void
 event_exit(void)
 {
@@ -802,6 +861,7 @@ event_exit(void)
 
     drx_exit();
     drmgr_exit();
+    drutil_exit();
 }
 
 static void
@@ -1028,13 +1088,14 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
 
     libinject_init(id);
 
-    dr_fprintf(STDERR, "[stderr] running dr_client_main");
+    dr_fprintf(STDERR, "[stderr] running dr_client_main\n");
     dr_fprintf(winafl_data.log, "[logfile] running dr_client_main");
 
     drmgr_init();
     drx_init();
     drreg_init(&ops);
     drwrap_init();
+    drutil_init();
 
     options_init(id, argc, argv);
 
@@ -1043,14 +1104,16 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
     drmgr_register_exception_event(onexception);
 
     if(options.coverage_kind == COVERAGE_BB) {
-        drmgr_register_bb_instrumentation_event(NULL, instrument_bb_coverage, NULL);
+        drmgr_register_bb_instrumentation_event(NULL, instrument_bb_coverage_combined, NULL);
     } else if(options.coverage_kind == COVERAGE_EDGE) {
-        drmgr_register_bb_instrumentation_event(NULL, instrument_edge_coverage, NULL);
+        drmgr_register_bb_instrumentation_event(NULL, instrument_edge_coverage_combined, NULL);
     }
 
     drmgr_register_module_load_event(event_module_load);
     drmgr_register_module_unload_event(event_module_unload);
     dr_register_nudge_event(event_nudge, id);
+   
+    wrap_preloaded_crts();
 
     client_id = id;
 
