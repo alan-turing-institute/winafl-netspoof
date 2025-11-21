@@ -79,9 +79,7 @@ extern void libinject_warn(const char *msg);
 extern void emit_fuzz_softstart(void);
 extern void emit_fuzz_softrollback(void);
 extern void emit_fuzz_restart(void);
-extern void pre_connect(void *wrapcxt, DR_PARAM_OUT void **user_data);
-extern void pre_send(void *wrapcxt, DR_PARAM_OUT void **user_data);
-extern void pre_recv(void *wrapcxt, DR_PARAM_OUT void **user_data);
+extern void wrap_network_symbols_extern(app_pc mod_base_addr, const char *module_name);
 extern void wrap_compare_symbols(HMODULE module_handle, const char *name_prefix);
 extern dr_emit_flags_t cmp_coverage(
   void *drcontext,
@@ -778,15 +776,7 @@ event_module_load(void *drcontext, const module_data_t *info, bool loaded)
     }
 
     if (_stricmp(module_name, "WS2_32.dll") == 0) {
-
-        to_wrap = (app_pc)dr_get_proc_address(info->handle, "connect");
-        bool result = drwrap_wrap(to_wrap,pre_connect, NULL);
-
-        to_wrap = (app_pc)dr_get_proc_address(info->handle, "send");
-        result = drwrap_wrap(to_wrap, pre_send, NULL);
-
-        to_wrap = (app_pc)dr_get_proc_address(info->handle, "recv");
-        result = drwrap_wrap(to_wrap, pre_recv, NULL);
+        wrap_network_symbols_extern(info->handle, module_name);
     }
 
     if(options.debug_mode && (_stricmp(module_name, "KERNEL32.dll") == 0)) {
