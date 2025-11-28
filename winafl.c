@@ -985,6 +985,9 @@ options_init(client_id_t id, int argc, const char *argv[])
             USAGE_CHECK((i + 1) < argc, "missing libinject trajectory");
             ++i;
         }
+        // Parse this config flag, but do nothing with it. The Rust external library will parse it later.
+        else if (strcmp(token, "-server_managed") == 0) {
+        }
         else if (strcmp(token, "-coverage_module") == 0) {
             USAGE_CHECK((i + 1) < argc, "missing module");
             target_modules = options.target_modules;
