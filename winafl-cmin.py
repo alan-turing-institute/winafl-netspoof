@@ -66,22 +66,26 @@ class AFLShowMapWorker(object):
         if args.static_instr:
             r.append('-Y')
         else:
-            r.extend(['-D', args.dynamorio_dir])
-            r.append('--')
-            r.extend(['-target_module', args.target_module])
+            if args.tinyinst_instr:
+                r.append('-y')
+                r.append('--')
+                for mod in args.instrument_modules:
+                    r.extend(['-instrument_module', mod])
+            else:
+                r.extend(['-D', args.dynamorio_dir])
+                r.append('--')
+                for mod in args.coverage_modules:
+                    r.extend(['-coverage_module', mod])
 
+            r.extend(['-target_module', args.target_module])
             if args.target_method is None:
                 r.extend(['-target_offset', '0x%x' % args.target_offset])
             else:
                 r.extend(['-target_method', args.target_method])
-
             r.extend(['-nargs', '%d' % args.nargs])
             r.extend(['-covtype', args.covtype])
             if args.call_convention is not None:
                 r.extend(['-call_convention', args.call_convention])
-
-            for mod in args.coverage_modules:
-                r.extend(['-coverage_module', mod])
 
         r.append('--')
         r.extend(args.target_cmdline)
@@ -179,6 +183,9 @@ def setup_argparse():
 
              * Typical use with static instrumentation
               winafl-cmin.py -Y -t 100000 -i in -o minset -- test.instr.exe @@
+            
+             * Typical use with TinyInst mode instrumentation
+             winafl-cmin.py -y -t 100000 -i in -o minset -instrument_module m.dll -target_module test.exe -target_method fuzz -nargs 2 -- test.exe @@
             '''
         ), 100, replace_whitespace = False))
     )
@@ -227,6 +234,26 @@ def setup_argparse():
         metavar = 'dir', help = 'directory containing DynamoRIO binaries (drrun, drconfig)'
     )
 
+    instr_type.add_argument(
+        '-y', '--tinyinst_instr', action = 'store_true',
+        help = 'use the TinyInst instrumentation mode'
+    )
+
+
+    instr_module = group.add_mutually_exclusive_group(required = True)
+    instr_module.add_argument(
+        '-coverage_module', dest = 'coverage_modules', default = None,
+        action = 'append', metavar = 'module', help = 'module for which to record coverage.'
+        ' Multiple module flags are supported'
+    )
+
+    instr_module.add_argument(
+        '-instrument_module', dest = 'instrument_modules', default = None,
+        action = 'append', metavar = 'module', help = 'module for which to record coverage.'
+        ' Multiple module flags are supported'
+    )
+
+
     group.add_argument(
         '-covtype', choices = ('edge', 'bb'), default = 'bb',
         help = 'the type of coverage being recorded (defaults to bb)'
@@ -235,15 +262,12 @@ def setup_argparse():
         '-call_convention', choices = ('stdcall', 'fastcall', 'thiscall', 'ms64'),
         default = 'stdcall', help = 'the calling convention of the target_method'
     )
-    group.add_argument(
-        '-coverage_module', dest = 'coverage_modules', default = None,
-        action = 'append', metavar = 'module', help = 'module for which to record coverage.'
-        ' Multiple module flags are supported'
-    )
+    
     group.add_argument(
         '-target_module', default = None, metavar = 'module',
         help = 'module which contains the target function to be fuzzed'
     )
+
     group.add_argument(
         '-nargs', type = int, default = None, metavar = 'nargs',
         help = 'number of arguments the fuzzed method takes. This is used to save/restore'
@@ -260,6 +284,7 @@ def setup_argparse():
         '-target_offset', default = None, type = target_offset, metavar = 'rva offset',
         help = 'offset of the method to fuzz from the start of the module'
     )
+
 
     group = parser.add_argument_group('execution control settings')
     group.add_argument(
@@ -370,35 +395,44 @@ def validate_args(args):
             return False
 
     if not args.static_instr:
-        # Make sure we have all the arguments we need
-        if len(args.coverage_modules) == 0:
-            logging.error(
-                '[!] -coverage_module is a required option to use'
-                'the dynamic instrumentation'
-            )
-            return False
-
         if None in [args.target_module, args.nargs]:
-            logging.error(
-                '[!] , -target_module and -nargs are required'
-                ' options to use the dynamic instrumentation mode.'
-            )
-            return False
-
+                logging.error(
+                    '[!] , -target_module and -nargs are required'
+                    ' options to use the dynamic instrumentation mode.'
+                )
+                return False
+            
         if args.target_method is None and args.target_offset is None:
             logging.error(
                 '[!] -target_method or -target_offset is required to use the'
                 ' dynamic instrumentation mode'
             )
             return False
+         
+        if not args.tinyinst_instr:
+            # Make sure we have all the arguments we need
+            if len(args.coverage_modules) == 0:
+                logging.error(
+                    '[!] -coverage_module is a required option to use'
+                    'the dynamic instrumentation'
+                )
+                return False
 
-        # If we are using DRIO, one of the thing we need is the DRIO client
-        winafl_path = os.path.join(args.working_dir, 'winafl.dll')
-        if not os.path.isfile(winafl_path):
-            logging.error(
-                '[!] winafl.dll needs to be in %s.', args.working_dir
-            )
-            return False
+            # If we are using DRIO, one of the thing we need is the DRIO client
+            winafl_path = os.path.join(args.working_dir, 'winafl.dll')
+            if not os.path.isfile(winafl_path):
+                logging.error(
+                    '[!] winafl.dll needs to be in %s.', args.working_dir
+                )
+                return False
+        else:
+             # Make sure we have all the arguments we need
+            if len(args.instrument_modules) == 0:
+                logging.error(
+                    '[!] -instrument_module is a required option to use'
+                    'the dynamic instrumentation'
+                )
+                return False
 
     if args.file_read is not None and '@@' not in args.file_read:
         # When a particular input file is specified, first

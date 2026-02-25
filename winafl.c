@@ -1099,7 +1099,7 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
 
     options_init(id, argc, argv);
 
-    dr_register_exit_event(event_exit);
+    drmgr_register_exit_event(event_exit);
 
     drmgr_register_exception_event(onexception);
 

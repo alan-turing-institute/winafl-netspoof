@@ -50,6 +50,14 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#ifdef TINYINST
+int tinyinst_init(int argc, char** argv);
+void tinyinst_set_fuzzer_id(char* fuzzer_id);
+int tinyinst_run(char** argv, uint32_t timeout);
+void tinyinst_killtarget();
+#endif
+
+
 static s32 child_pid;                 /* PID of the tested program         */
 
 static HANDLE child_handle,
@@ -87,6 +95,7 @@ static u8  quiet_mode,                /* Hide non-essential messages?      */
            cmin_mode,                 /* Generate output in afl-cmin mode? */
            binary_mode,               /* Write output as a binary map      */
            drioless = 0;              /* Running without DRIO?             */
+          use_tinyinst = 0;          /* Using TinyInst instrumentation   */
 
 static volatile u8
            stop_soon,                 /* Ctrl-C pressed?                   */
@@ -572,6 +581,13 @@ static void destroy_target_process(int wait_exit) {
   STARTUPINFO si;
   PROCESS_INFORMATION pi;
 
+#ifdef TINYINST
+  if (use_tinyinst) {
+    tinyinst_killtarget();
+    return;
+  }
+#endif
+
   EnterCriticalSection(&critical_section);
 
   if(!child_handle) {
@@ -674,6 +690,13 @@ static int is_child_running() {
 /* Execute target application. */
 
 static void run_target(char** argv) {
+
+
+#ifdef TINYINST
+  if (use_tinyinst) {
+    return tinyinst_run(argv, exec_tmout);
+  }
+#endif
 
   char command[] = "F";
   DWORD num_read;
@@ -963,15 +986,24 @@ int main(int argc, char** argv) {
   optind = 1;
   dynamorio_dir = NULL;
   client_params = NULL;
+  use_tinyinst = 0;
 
 #ifdef USE_COLOR
   enable_ansi_console();
 #endif
 
-  while ((opt = getopt(argc, argv, "+o:m:t:A:D:eqZQbY")) > 0)
-
+  while ((opt = getopt(argc, argv, "+o:m:t:A:D:eqyZQbY")) > 0)
     switch (opt) {
 
+    case 'y':
+        #ifdef TINYINST
+              use_tinyinst = 1;
+        #else
+              FATAL("afl-fuzz was not compiled with TinyInst support");
+        #endif
+        break;
+      
+      
       case 'D': /* dynamorio dir */
 
         if(dynamorio_dir) FATAL("Multiple -D options not supported");
@@ -1094,13 +1126,30 @@ int main(int argc, char** argv) {
 
   if(!out_file) usage(argv[0]);
   if(!drioless) {
-    if(optind == argc || !dynamorio_dir) usage(argv[0]);
+    if(optind == argc || (!dynamorio_dir && !use_tinyinst)) usage(argv[0]);
   }
 
-  extract_client_params(argc, argv);
+ if (use_tinyinst) {
+#ifdef TINYINST
+    int tinyinst_options = tinyinst_init(argc - optind, argv + optind);
+    if (!tinyinst_options) usage(argv[0]);
+    optind += tinyinst_options;
+#endif
+  } else {
+	  extract_client_params(argc, argv);
+  }
   optind++;
 
   setup_shm();
+
+  if (use_tinyinst) {
+#ifdef TINYINST
+    tinyinst_set_fuzzer_id(fuzzer_id);
+#endif
+  }
+
+
+
   setup_watchdog_timer();
   setup_signal_handlers();
 

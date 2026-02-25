@@ -73,6 +73,10 @@ add_executable(afl-showmap
   afl-showmap.c
   )
 
+if (${TINYINST})
+  target_link_libraries(afl-showmap winafl_tinyinst)
+endif()
+
 project(afl-tmin)
 
 add_executable(afl-tmin
